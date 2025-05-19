@@ -1,4 +1,10 @@
 #include "schedular.h"
+#include <random>
+
+#define DRONE_DISTANCE_WEIGHT 0.3
+#define DRONE_DIRECTION_WEIGHT 0.2
+#define DRONE_SPREAD_WEIGHT 0.1
+#define DRONE_RANDOM_WEIGHT 0.001
 
 // D* 탐색 알고리즘을 위한 간단한 구조체
 struct Node {
@@ -18,52 +24,29 @@ void Scheduler::initialize(const vector<vector<vector<int>>>& known_cost_map,
     // 초기화 완료 표시
     initialized = true;
 
-    // 맵 크기 계산
-    int mapSize = known_cost_map.size();
-
     // 드론의 평균 이동 비용 계산
     avgDroneCost = calculateAvgDroneCost(known_cost_map);
 
-    // 드론에 지역 할당 (좌측과 우측 번갈아가며)
-    int regionAssignment = 0;
     // 각 드론의 경로 초기화
     for (const auto& robot : robots) {
         if (robot->type == ROBOT::TYPE::DRONE) {
             DronePathInfo pathInfo;
             pathInfo.initialized = true;
-            pathInfo.currentWaypointIndex = 0;
-            pathInfo.assignedRegion = regionAssignment;
-
-            // 드론을 위한 탐색 웨이포인트 생성
-            pathInfo.waypoints = generateWaypoints(mapSize, regionAssignment);
-
-            // 벽인 곳에 있는 웨이포인트 제거
-            vector<Coord> validWaypoints;
-            for (const Coord& wp : pathInfo.waypoints) {
-                if (known_object_map[wp.x][wp.y] != OBJECT::WALL) {
-                    validWaypoints.push_back(wp);
-                }
-#ifdef DRONE_PATH_VISUALIZATION
-                else {
-                    cout << "웨이포인트 제거 (벽): (" << wp.x << ", " << wp.y << ")" << endl;
-                }
-#endif
-            }
-            pathInfo.waypoints = validWaypoints;
-
-            // 첫 웨이포인트까지의 경로 찾기
-            if (!pathInfo.waypoints.empty()) {
-                pathInfo.currentPath = findPathToTarget(
-                    robot->get_coord(),
-                    pathInfo.waypoints[0],
-                    known_cost_map,
-                    known_object_map
-                );
-            }            // 드론의 경로 정보 저장
+            pathInfo.movesSinceLastDestUpdate = 0;
+            pathInfo.lastMovement = Coord(0, 0); // 초기에는 이동방향 없음
+            
+            // 드론의 경로 정보 초기화
+            updateDroneDestination(
+                robot->get_coord(),
+                pathInfo,
+                known_cost_map,
+                known_object_map,
+                robots,
+                robot->id
+            );
+            
+            // 드론의 경로 정보 저장
             dronePaths[robot->id] = pathInfo;
-
-            // 다음 드론을 위한 지역 할당 번갈아가며 설정
-            regionAssignment = (regionAssignment + 1) % 2;
         }
     }
 
@@ -71,49 +54,262 @@ void Scheduler::initialize(const vector<vector<vector<int>>>& known_cost_map,
     visualizeDronePaths(known_object_map, robots);
 }
 
-vector<Coord> Scheduler::generateWaypoints(int mapSize, int assignedRegion) {
-    vector<Coord> waypoints;
+// 맨해튼 거리 계산
+int Scheduler::calculateManhattanDistance(const Coord& a, const Coord& b) {
+    return abs(a.x - b.x) + abs(a.y - b.y);
+}
 
-    // 맵을 5x5 그리드로 나눔
-    const int grid_divisions = 5; // 5x5 그리드
-    const int cell_size = mapSize / grid_divisions;
+// 유클리드 거리 계산
+double Scheduler::calculateEuclideanDistance(const Coord& a, const Coord& b) {
+    double dx = a.x - b.x;
+    double dy = a.y - b.y;
+    return sqrt(dx * dx + dy * dy);
+}
 
-    // 할당된 지역에 따라 경계 결정 (왼쪽/오른쪽 반으로 나누기)
-    int startGridX = (assignedRegion == 0) ? 0 : grid_divisions / 2;
-    int endGridX = (assignedRegion == 0) ? grid_divisions / 2 - 1 : grid_divisions - 1;
+// 셀이 알려지지 않은 셀인지 확인
+bool Scheduler::isUnknownCell(const Coord& coord, const vector<vector<OBJECT>>& known_object_map) {
+    int mapSize = known_object_map.size();
+    if (coord.x < 0 || coord.x >= mapSize || coord.y < 0 || coord.y >= mapSize) {
+        return false; // 맵 바깥은 알려지지 않은 셀이 아님
+    }
+    return known_object_map[coord.x][coord.y] == OBJECT::UNKNOWN;
+}
 
-    // 지그재그 패턴으로 웨이포인트 생성
-    // 홀수 행은 왼쪽->오른쪽, 짝수 행은 오른쪽->왼쪽
-    for (int gridY = 0; gridY < grid_divisions; gridY++) {
-        // 왼쪽->오른쪽 또는 오른쪽->왼쪽 결정
-        bool leftToRight = (gridY % 2 == 0);
-        
-        // 현재 행의 x 범위 설정
-        int startX = leftToRight ? startGridX : endGridX;
-        int endX = leftToRight ? endGridX : startGridX;
-        int step = leftToRight ? 1 : -1;
-        
-        // 이 행의 웨이포인트 추가
-        for (int gridX = startX; leftToRight ? (gridX <= endX) : (gridX >= endX); gridX += step) {
-            // 각 그리드 셀의 중심점 계산
-            int centerX = gridX * cell_size + cell_size / 2;
-            int centerY = gridY * cell_size + cell_size / 2;
-
-            // 맵 경계 내에 있는지 확인
-            if (centerX < mapSize && centerY < mapSize) {
-                waypoints.emplace_back(centerX, centerY);
+// 경로에 벽이 있는지 확인
+bool Scheduler::pathHasWalls(const vector<Coord>& path, const vector<vector<OBJECT>>& known_object_map) {
+    for (const auto& coord : path) {
+        // 경로 상의 각 좌표가 맵 범위 내에 있고 벽인지 확인
+        int mapSize = known_object_map.size();
+        if (coord.x >= 0 && coord.x < mapSize && coord.y >= 0 && coord.y < mapSize) {
+            if (known_object_map[coord.x][coord.y] == OBJECT::WALL) {
+                return true; // 벽을 발견하면 즉시 true 반환
             }
         }
-    }
+    }    return false; // 벽이 없으면 false 반환
+}
 
-#ifdef DRONE_PATH_VISUALIZATION
-    cout << "생성된 웨이포인트 (지역 " << assignedRegion << "):" << endl;
-    for (const auto& wp : waypoints) {
-        cout << " - (" << wp.x << ", " << wp.y << ")" << endl;
-    }
-#endif
+// 드론의 목적지와 경로 업데이트 헬퍼 함수
+void Scheduler::updateDroneDestination(const Coord& dronePosition,
+                                     DronePathInfo& pathInfo,
+                                     const vector<vector<vector<int>>>& known_cost_map,
+                                     const vector<vector<OBJECT>>& known_object_map,
+                                     const vector<shared_ptr<ROBOT>>& robots,
+                                     int droneId) {
+    // 새 목적지 찾기
+    pathInfo.targetDestination = findBestDestination(
+        dronePosition,
+        pathInfo.lastMovement,
+        known_cost_map,
+        known_object_map,
+        robots,
+        droneId
+    );
+    
+    // 새 경로 찾기
+    pathInfo.currentPath = findPathToTarget(
+        dronePosition,
+        pathInfo.targetDestination,
+        known_cost_map,
+        known_object_map
+    );
+    
+    // 이동 횟수 초기화
+    pathInfo.movesSinceLastDestUpdate = 0;
+}
 
-    return waypoints;
+// D* 경로에서 알려지지 않은 셀 수 계산
+int Scheduler::countUnknownCellsInPath(const vector<Coord>& path, 
+                                    const vector<vector<OBJECT>>& known_object_map) {
+    int count = 0;
+    for (const auto& coord : path) {
+        if (isUnknownCell(coord, known_object_map)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+// 각 셀의 기본 탐색 점수 계산 (새로 밝히는 셀 수 / 거리)
+double Scheduler::calculateBaseScore(const Coord& position, 
+                                 const Coord& dronePosition,
+                                 const vector<vector<vector<int>>>& known_cost_map,
+                                 const vector<vector<OBJECT>>& known_object_map) {
+    // 목적지까지의 경로 찾기
+    vector<Coord> path = findPathToTarget(dronePosition, position, known_cost_map, known_object_map);
+    
+    // 경로가 없으면 점수는 0
+    if (path.empty()) {
+        return 0.0;
+    }
+    
+    // 경로에서 알려지지 않은 셀 수 계산
+    int newCells = countUnknownCellsInPath(path, known_object_map);
+    
+    // 경로의 길이
+    int pathLength = path.size();
+    
+    // 경로 길이가 0이면 점수는 0
+    if (pathLength == 0) {
+        return 0.0;
+    }
+    
+    // 알려지지 않은 셀 수를 경로 길이로 나눔
+    return static_cast<double>(newCells) / pathLength;
+}
+
+// 다른 드론과의 거리 점수 계산
+double Scheduler::calculateDroneDistanceScore(const Coord& position,
+                                           const vector<shared_ptr<ROBOT>>& robots,
+                                           int currentDroneId) {
+    double minDistance = INFINITE;
+    double mapSize = 0;
+    
+    // 맵 크기 추정 (첫 번째 드론의 위치를 기준으로)
+    for (const auto& robot : robots) {
+        if (robot->type == ROBOT::TYPE::DRONE) {
+            Coord pos = robot->get_coord();
+            mapSize = max(mapSize, static_cast<double>(pos.x));
+            mapSize = max(mapSize, static_cast<double>(pos.y));
+        }
+    }
+    mapSize = max(mapSize * 2, 20.0); // 맵 크기를 대략적으로 추정
+    
+    // 현재 드론을 제외한 다른 드론과의 최소 거리 찾기
+    for (const auto& robot : robots) {
+        if (robot->type == ROBOT::TYPE::DRONE && robot->id != currentDroneId) {
+            double distance = calculateEuclideanDistance(position, robot->get_coord());
+            minDistance = min(minDistance, distance);
+        }
+    }
+    
+    // 거리가 무한대면 다른 드론이 없거나 모두 현재 드론과 같은 위치
+    if (minDistance == INFINITE) {
+        return 0.0;
+    }
+    
+    // 최소 거리를 맵 크기로 정규화 (0~1 사이의 값으로)
+    return min(1.0, minDistance / mapSize);
+}
+
+// 이전 이동 방향과의 일치도 점수 계산
+double Scheduler::calculateDirectionAlignmentScore(const Coord& position,
+                                                const Coord& dronePosition,
+                                                const Coord& lastMovement) {
+    // 이전 이동이 없으면 점수는 0.5 (중립)
+    if (lastMovement.x == 0 && lastMovement.y == 0) {
+        return 0.5;
+    }
+    
+    // 현재 드론 위치에서 목표 위치로 가는 맨해튼 거리
+    int currentManhattan = calculateManhattanDistance(dronePosition, position);
+    
+    // 이전 이동 방향으로 한 칸 이동했을 때의 위치 계산
+    Coord nextPos = Coord(dronePosition.x + lastMovement.x, dronePosition.y + lastMovement.y);
+    
+    // 이동 후 위치에서 목표 위치로 가는 맨해튼 거리
+    int nextManhattan = calculateManhattanDistance(nextPos, position);
+    
+    // 거리가 줄어들면 1, 아니면 0
+    return (nextManhattan < currentManhattan) ? 1.0 : 0.0;
+}
+
+// 맵 중심에서의 확산 보너스 점수 계산
+double Scheduler::calculateSpreadBonusScore(const Coord& position,
+                                         const vector<vector<OBJECT>>& known_object_map) {
+    int mapSize = known_object_map.size();
+    
+    // 맵 중심 좌표 계산
+    Coord center = Coord(mapSize / 2, mapSize / 2);
+    
+    // 중심에서의 유클리드 거리 계산
+    double distance = calculateEuclideanDistance(position, center);
+    
+    // 맵 대각선 길이의 절반 (정규화를 위한 최대 거리)
+    double maxDistance = sqrt(2.0) * mapSize / 2.0;
+    
+    // 거리를 0~1 사이의 값으로 정규화 (중심에서 멀수록 높은 점수)
+    return min(1.0, distance / maxDistance);
+}
+
+// 최적의 목적지 찾기
+Coord Scheduler::findBestDestination(const Coord& dronePosition,
+                                  const Coord& lastMovement,
+                                  const vector<vector<vector<int>>>& known_cost_map,
+                                  const vector<vector<OBJECT>>& known_object_map,
+                                  const vector<shared_ptr<ROBOT>>& robots,
+                                  int droneId) {
+    int mapSize = known_cost_map.size();
+    vector<CellScore> candidateCells;
+    
+    // 랜덤 요소를 위한 난수 생성기 초기화
+    random_device rd;
+    mt19937 gen(rd());
+    uniform_real_distribution<> dis(0.0, 1.0);
+    
+    // 스캔 범위는 드론 기준 상하좌우 5칸씩 총 11x11 범위
+    int scanRange = 5;
+    int startX = max(2, dronePosition.x - scanRange);
+    int startY = max(2, dronePosition.y - scanRange);
+    int endX = min(mapSize - 2, dronePosition.x + scanRange);
+    int endY = min(mapSize - 2, dronePosition.y + scanRange);
+    
+    // 맵 전체를 스캔하면서 후보 셀 선정
+    for (int x = startX; x < endX; x++) {
+        for (int y = startY; y < endY; y++) {
+            Coord position(x, y);
+            
+            // 벽이나 작업인 셀은 제외
+            if (known_object_map[x][y] == OBJECT::WALL || 
+                known_object_map[x][y] == OBJECT::TASK) {
+                continue;
+            }
+            
+            // 현재 위치는 제외
+            if (x == dronePosition.x && y == dronePosition.y) {
+                continue;
+            }
+            
+            // 목적지까지의 경로 찾기
+            vector<Coord> path = findPathToTarget(dronePosition, position, known_cost_map, known_object_map);
+            
+            // 경로가 없거나 경로에 알려지지 않은 셀이 5개 이상이면 제외
+            if (path.empty() || countUnknownCellsInPath(path, known_object_map) >= 5) {
+                continue;
+            }
+            
+            // 각 요소별 점수 계산
+            double baseScore = calculateBaseScore(position, dronePosition, known_cost_map, known_object_map);
+            double droneDistanceScore = calculateDroneDistanceScore(position, robots, droneId);
+            double directionAlignmentScore = calculateDirectionAlignmentScore(position, dronePosition, lastMovement);
+            double spreadBonusScore = calculateSpreadBonusScore(position, known_object_map);
+            
+            // 랜덤 요소 (0~1 사이의 값)
+            double randomFactor = dis(gen);
+            
+            // 최종 점수 계산
+            double finalScore = baseScore + 
+                                DRONE_DIRECTION_WEIGHT * droneDistanceScore + 
+                                DRONE_DIRECTION_WEIGHT * directionAlignmentScore +
+                                DRONE_SPREAD_WEIGHT * spreadBonusScore + 
+                                DRONE_RANDOM_WEIGHT * randomFactor;
+            
+            // 후보 셀에 추가
+            candidateCells.emplace_back(position, finalScore);
+        }
+    }
+    
+    // 후보 셀이 없으면 현재 위치 반환
+    if (candidateCells.empty()) {
+        return dronePosition;
+    }
+    
+    // 점수가 가장 높은 셀 찾기
+    auto bestCell = max_element(candidateCells.begin(), candidateCells.end(),
+                              [](const CellScore& a, const CellScore& b) {
+                                  return a.score < b.score;
+                              });
+    
+    return bestCell->position;
 }
 
 vector<Coord> Scheduler::findPathToTarget(const Coord& start,
@@ -139,6 +335,7 @@ vector<Coord> Scheduler::findPathToTarget(const Coord& start,
     vector<vector<bool>> visited(mapSize, vector<bool>(mapSize, false));
     vector<vector<Coord>> parent(mapSize, vector<Coord>(mapSize, Coord(-1, -1)));
     vector<vector<int>> gScore(mapSize, vector<int>(mapSize, INFINITE));
+    
     // 목표 노드부터 시작 (D*는 역방향으로 검색)
     openSet.push(Node(target, 0));
     gScore[target.x][target.y] = 0;
@@ -198,8 +395,7 @@ vector<Coord> Scheduler::findPathToTarget(const Coord& start,
     Coord current = start;
 
     // 경로를 찾았는지 확인
-    if (parent[start.x][start.y].x != -1) {
-        while (!(current.x == target.x && current.y == target.y)) {
+    if (parent[start.x][start.y].x != -1) {        while (!(current.x == target.x && current.y == target.y)) {
             path.push_back(current);
             current = parent[current.x][current.y];
         }
@@ -225,7 +421,7 @@ ROBOT::ACTION Scheduler::getNextAction(const Coord& current, const Coord& next) 
 
     // 유효한 이동이 없으면 제자리에 있기
 #ifdef DRONE_PATH_VISUALIZATION
-    cout << "Drone " << current.x << " is holding at (" << current.x << ", " << current.y << ")" << endl;
+    cout << "Drone is holding at (" << current.x << ", " << current.y << ")" << endl;
 #endif
     return ROBOT::ACTION::HOLD;
 }
@@ -262,115 +458,56 @@ void Scheduler::on_info_updated(const set<Coord>& observed_coords,
     const vector<vector<OBJECT>>& known_object_map,
     const vector<shared_ptr<TASK>>& active_tasks,
     const vector<shared_ptr<ROBOT>>& robots) {
-    // 맵 정보가 업데이트된 경우 드론의 경로 재계산
+    
+    // 맵 정보가 업데이트된 경우 드론의 경로 재계산 (필요한 경우)
     if (!updated_coords.empty()) {
         for (const auto& robot : robots) {
-            if (robot->type == ROBOT::TYPE::DRONE && robot->get_status() == ROBOT::STATUS::IDLE) {
-                auto& pathInfo = dronePaths[robot->id];                // 드론이 초기화되었고 현재 웨이포인트가 있는 경우에만 업데이트
-                if (pathInfo.initialized && pathInfo.currentWaypointIndex < pathInfo.waypoints.size()) {
-                    // 현재 웨이포인트가 벽인지 확인하고 필요하면 웨이포인트 목록 갱신
-                    if (!pathInfo.waypoints.empty()) {
-                        // 현재 및 남은 웨이포인트들 중 벽인 것들을 제거
-                        vector<Coord> validWaypoints;
-                        bool currentWaypointRemoved = false;
-                        
-                        for (size_t i = pathInfo.currentWaypointIndex; i < pathInfo.waypoints.size(); i++) {
-                            const Coord& wp = pathInfo.waypoints[i];
-                            if (known_object_map[wp.x][wp.y] != OBJECT::WALL) {
-                                validWaypoints.push_back(wp);
-                            } else {
+            if (robot->type == ROBOT::TYPE::DRONE) {
+                auto& pathInfo = dronePaths[robot->id];
+                
+                // 드론이 초기화되었는지 확인
+                if (!pathInfo.initialized) {
+                    continue;
+                }
+                
+                // 경로 재계산이 필요한지 확인
+                bool needPathRecalculation = false;
+                
+                // 1. 목적지가 벽인지 확인
+                if (known_object_map[pathInfo.targetDestination.x][pathInfo.targetDestination.y] == OBJECT::WALL) {
 #ifdef DRONE_PATH_VISUALIZATION
-                                cout << "웨이포인트 제거 (벽 발견): (" << wp.x << ", " << wp.y << ")" << endl;
+                    cout << "목적지가 벽으로 확인됨. 새 목적지 설정." << endl;
 #endif
-                                if (i == pathInfo.currentWaypointIndex) {
-                                    currentWaypointRemoved = true;
-                                }
-                            }
-                        }
-                        
-                        // 이전 웨이포인트는 그대로 유지
-                        vector<Coord> newWaypoints;
-                        for (size_t i = 0; i < pathInfo.currentWaypointIndex; i++) {
-                            newWaypoints.push_back(pathInfo.waypoints[i]);
-                        }
-                        
-                        // 유효한 웨이포인트 추가
-                        for (const auto& wp : validWaypoints) {
-                            newWaypoints.push_back(wp);
-                        }
-                        
-                        // 웨이포인트 목록 갱신
-                        pathInfo.waypoints = newWaypoints;
-                        
-                        // 현재 웨이포인트가 제거되었으면 인덱스 조정 불필요 (아래 로직에서 empty 체크하므로)
-                        // 그렇지 않으면 현재 인덱스 유지
-                        if (currentWaypointRemoved && !pathInfo.waypoints.empty() && 
-                            pathInfo.currentWaypointIndex >= pathInfo.waypoints.size()) {
-                            pathInfo.currentWaypointIndex = pathInfo.waypoints.size() - 1;
-                        }
-                    }
-                    
-                    // 웨이포인트가 남아있는지 확인
-                    if (pathInfo.waypoints.empty() || pathInfo.currentWaypointIndex >= pathInfo.waypoints.size()) {
+                    needPathRecalculation = true;
+                }
+                // 2. 경로에 벽이 있는지 확인
+                else if (!pathInfo.currentPath.empty() && pathHasWalls(pathInfo.currentPath, known_object_map)) {
 #ifdef DRONE_PATH_VISUALIZATION
-                        cout << "모든 웨이포인트가 벽으로 판명됨. 탐색 중단." << endl;
+                    cout << "경로에 벽 발견: 목적지를 업데이트합니다." << endl;
 #endif
-                        // 웨이포인트가 없으면 빈 경로 설정
-                        pathInfo.currentPath.clear();
-                    } else {
-                        // 현재 웨이포인트까지의 경로 재계산                    
-                        pathInfo.currentPath = findPathToTarget(
-                            robot->get_coord(),
-                            pathInfo.waypoints[pathInfo.currentWaypointIndex],
-                            known_cost_map,
-                            known_object_map
-                        );
-                        
-                        // 경로를 찾지 못했다면 다음 웨이포인트로 넘어감
-                        if (pathInfo.currentPath.empty() && pathInfo.currentWaypointIndex < pathInfo.waypoints.size() - 1) {
+                    needPathRecalculation = true;
+                }
+                
+                // 경로 재계산이 필요한 경우
+                if (needPathRecalculation) {
+                    updateDroneDestination(
+                        robot->get_coord(),
+                        pathInfo,
+                        known_cost_map,
+                        known_object_map,
+                        robots,
+                        robot->id
+                    );
 #ifdef DRONE_PATH_VISUALIZATION
-                            cout << "경로를 찾을 수 없음: 웨이포인트("
-                                << pathInfo.waypoints[pathInfo.currentWaypointIndex].x << ", "
-                                << pathInfo.waypoints[pathInfo.currentWaypointIndex].y << ")는 도달할 수 없음. 다음 웨이포인트로 이동합니다." << endl;
+                    cout << "새 목적지 설정: (" 
+                        << pathInfo.targetDestination.x << ", " 
+                        << pathInfo.targetDestination.y << ")" << endl;
+                    cout << "새 경로 길이: " << pathInfo.currentPath.size() << endl;
+                    visualizeDronePaths(known_object_map, robots);
 #endif
-                            // 다음 웨이포인트로 이동
-                            pathInfo.currentWaypointIndex++;
-                            
-                            // 새 웨이포인트까지의 경로 찾기
-                            pathInfo.currentPath = findPathToTarget(
-                                robot->get_coord(),
-                                pathInfo.waypoints[pathInfo.currentWaypointIndex],
-                                known_cost_map,
-                                known_object_map
-                            );
-                        }
-                    }
-
-                    // 경로에 벽이 포함되어 있는지 확인
-                    if (!pathInfo.currentPath.empty() && pathInfo.currentPath.size() >= 2) {
-                        Coord nextPos = pathInfo.currentPath[1];
-                        if (known_object_map[nextPos.x][nextPos.y] == OBJECT::WALL) {
-#ifdef DRONE_PATH_VISUALIZATION
-                            cout << "경로에 벽 발견: 경로를 재계산합니다." << endl;
-#endif
-                            // 경로 재계산
-                            pathInfo.currentPath = findPathToTarget(
-                                robot->get_coord(),
-                                pathInfo.waypoints[pathInfo.currentWaypointIndex],
-                                known_cost_map,
-                                known_object_map
-                            );
-                        }
-                    }
                 }
             }
         }
-
-        // 경로가 업데이트된 후 시각화
-#ifdef DRONE_PATH_VISUALIZATION
-//         cout << "\n==================== MAP UPDATED ====================\n" << endl;
-//         visualizeDronePaths(known_object_map, robots);
-#endif
     }
 }
 
@@ -393,139 +530,116 @@ ROBOT::ACTION Scheduler::idle_action(const set<Coord>& observed_coords,
     const vector<shared_ptr<TASK>>& active_tasks,
     const vector<shared_ptr<ROBOT>>& robots,
     const ROBOT& robot) {
+    
     // 아직 초기화되지 않았으면 초기화
     if (!initialized) {
         initialize(known_cost_map, known_object_map, robots);
     }
 
-    // 드론의 경우, 탐색 경로 따르기
-    if (robot.type == ROBOT::TYPE::DRONE) {
-        auto& pathInfo = dronePaths[robot.id];
-        bool waypointReached = false;
-
-        // 드론에 경로가 없거나 현재 웨이포인트에 도달한 경우
-        if (pathInfo.currentPath.empty() ||
-            (pathInfo.currentPath.size() == 1 &&
-                pathInfo.currentPath[0].x == robot.get_coord().x &&
-                pathInfo.currentPath[0].y == robot.get_coord().y)) {
-
-            // 웨이포인트 도달 플래그 설정
-            waypointReached = true;            // 다음 웨이포인트로 이동 (있는 경우)
-            pathInfo.currentWaypointIndex++;
-
-            // 아직 웨이포인트가 남아있으면
-            if (pathInfo.currentWaypointIndex < pathInfo.waypoints.size()) {
+    // 드론이 아닌 로봇은 HOLD 액션 반환
+    if (robot.type != ROBOT::TYPE::DRONE) {
+        return ROBOT::ACTION::HOLD;
+    }
+    
+    // 이하 코드는 드론만 실행
+    auto& pathInfo = dronePaths[robot.id];
+    bool destinationReached = false;
+    bool updateDestination = false;
+    
+    // 1. 목적지 업데이트가 필요한 상황인지 확인
+    // 1-1. 현재 위치가 목적지인 경우
+    if (robot.get_coord().x == pathInfo.targetDestination.x && 
+        robot.get_coord().y == pathInfo.targetDestination.y) {
+        destinationReached = true;
+        updateDestination = true;
 #ifdef DRONE_PATH_VISUALIZATION
-                cout << "\n============= WAYPOINT REACHED =============\n" << endl;
-                cout << "Drone " << robot.id << " reached waypoint "
-                    << pathInfo.currentWaypointIndex - 1 << " of "
-                    << pathInfo.waypoints.size() - 1 << endl;
-                cout << "Moving to next waypoint: ("
-                    << pathInfo.waypoints[pathInfo.currentWaypointIndex].x << ", "
-                    << pathInfo.waypoints[pathInfo.currentWaypointIndex].y << ")\n" << endl;
+        cout << "드론이 목적지에 도달했습니다. 새 목적지를 설정합니다." << endl;
 #endif
-
-                // 다음 웨이포인트까지의 경로 찾기
-                pathInfo.currentPath = findPathToTarget(
-                    robot.get_coord(),
-                    pathInfo.waypoints[pathInfo.currentWaypointIndex],
-                    known_cost_map,
-                    known_object_map
-                );
-            }
-            else {
+    }
+    // 1-2. 일정 횟수(10번) 이동 후 목적지 재설정
+    else if (pathInfo.movesSinceLastDestUpdate >= 3) {
+        updateDestination = true;
 #ifdef DRONE_PATH_VISUALIZATION
-                cout << "\n============= EXPLORATION COMPLETE =============\n" << endl;
-                cout << "Drone " << robot.id << " completed all waypoints. Holding position." << endl;
+        cout << "3번 이동 후 목적지를 재설정합니다." << endl;
 #endif
-                // 모든 웨이포인트 탐색 완료, 제자리에 있기
-                return ROBOT::ACTION::HOLD;
-            }
+    }
+    // 1-3. 경로가 비어있는 경우
+    else if (pathInfo.currentPath.empty()) {
+        updateDestination = true;
+#ifdef DRONE_PATH_VISUALIZATION
+        cout << "경로가 비어있어 목적지를 재설정합니다." << endl;
+#endif
+    }
+    
+    // 2. 목적지 업데이트가 필요한 경우
+    if (updateDestination) {
+        updateDroneDestination(robot.get_coord(), pathInfo, known_cost_map, known_object_map, robots, robot.id);
+        
+#ifdef DRONE_PATH_VISUALIZATION
+        cout << "새 목적지 설정: (" 
+            << pathInfo.targetDestination.x << ", " 
+            << pathInfo.targetDestination.y << ")" << endl;
+        cout << "새 경로 길이: " << pathInfo.currentPath.size() << endl;
+        visualizeDronePaths(known_object_map, robots);
+#endif
+    }
+    
+    // 3. 경로가 비어있거나 현재 위치만 포함하는 경우
+    bool invalidPath = pathInfo.currentPath.empty() || 
+        (pathInfo.currentPath.size() == 1 && 
+         pathInfo.currentPath[0].x == robot.get_coord().x && 
+         pathInfo.currentPath[0].y == robot.get_coord().y);
+    
+    if (invalidPath) {
+        // 목적지에 도달하지 않았다면 경로만 재계산
+        if (!destinationReached) {
+            pathInfo.currentPath = findPathToTarget(
+                robot.get_coord(),
+                pathInfo.targetDestination,
+                known_cost_map,
+                known_object_map
+            );
         }
-        // 경로가 최소 두 지점 이상 있는 경우 유효
-        if (pathInfo.currentPath.size() >= 2) {
-            // 현재 위치는 경로의 첫 번째, 다음 위치는 두 번째
-            Coord nextPos = pathInfo.currentPath[1];
-
-            // 다음 위치가 벽인지 확인
-            if (known_object_map[nextPos.x][nextPos.y] == OBJECT::WALL) {
-#ifdef DRONE_PATH_VISUALIZATION
-                cout << "Drone " << robot.id << " 경로상 벽 발견: (" << nextPos.x << ", " << nextPos.y
-                    << "). 경로 재계산 중..." << endl;
-#endif                // 경로 재계산
-                pathInfo.currentPath = findPathToTarget(
-                    robot.get_coord(),
-                    pathInfo.waypoints[pathInfo.currentWaypointIndex],
-                    known_cost_map,
-                    known_object_map
-                );                // 경로를 찾지 못했다면 다음 웨이포인트로 넘어감
-                if (pathInfo.currentPath.empty() || pathInfo.currentPath.size() < 2) {
-#ifdef DRONE_PATH_VISUALIZATION
-                    cout << "경로를 찾을 수 없음: 다음 웨이포인트로 넘어갑니다." << endl;
-#endif
-                    pathInfo.currentWaypointIndex++;
-
-                    // 모든 웨이포인트를 탐색했는지 확인
-                    if (pathInfo.currentWaypointIndex >= pathInfo.waypoints.size()) {
-#ifdef DRONE_PATH_VISUALIZATION
-                        cout << "\n============= EXPLORATION COMPLETE =============\n" << endl;
-                        cout << "Drone " << robot.id << " completed all waypoints. Holding position." << endl;
-#endif
-                        return ROBOT::ACTION::HOLD;
-                    }
-
-                    // 다음 웨이포인트까지의 경로 찾기
-                    pathInfo.currentPath = findPathToTarget(
-                        robot.get_coord(),
-                        pathInfo.waypoints[pathInfo.currentWaypointIndex],
-                        known_cost_map,
-                        known_object_map
-                    );
-
-                    // 새 경로도 유효하지 않다면 제자리에 머무름
-                    if (pathInfo.currentPath.size() < 2) {
-                        return ROBOT::ACTION::HOLD;
-                    }
-
-                    // 새 경로의 다음 위치 설정
-                    nextPos = pathInfo.currentPath[1];
-                }
-                else {
-                    // 새 경로의 다음 위치 설정
-                    nextPos = pathInfo.currentPath[1];
-                }
-            }
-
-            // 경로에서 현재 위치 제거
-            pathInfo.currentPath.erase(pathInfo.currentPath.begin());
-
-#ifdef DRONE_PATH_VISUALIZATION
-            // 웨이포인트에 도달한 경우 또는 맵이 업데이트된 경우에만 전체 시각화
-            if (waypointReached || !updated_coords.empty()) {
-                visualizeDronePaths(known_object_map, robots);
-            }
-            else {
-                // 움직임만 표시
-                cout << "Drone " << robot.id << " moving from " << robot.get_coord()
-                    << " to " << nextPos << ", remaining path length: "
-                    << pathInfo.currentPath.size() << endl;
-            }
-#endif
-
-            // 다음 위치로 이동하는 액션 반환
-            return getNextAction(robot.get_coord(), nextPos);
-        }
-        else {
-            // 경로가 비어있거나 현재 위치만 포함하는 경우 제자리에 있기
+        
+        // 여전히 경로가 유효하지 않다면 제자리에 있기
+        invalidPath = pathInfo.currentPath.empty() || 
+            (pathInfo.currentPath.size() == 1 && 
+             pathInfo.currentPath[0].x == robot.get_coord().x && 
+             pathInfo.currentPath[0].y == robot.get_coord().y);
+        
+        if (invalidPath) {
             return ROBOT::ACTION::HOLD;
         }
     }
-    else {
-        // 드론이 아닌 로봇은 무작위로 이동
-        // ROBOT::ACTION action = static_cast<ROBOT::ACTION>(rand() % 5);
-        ROBOT::ACTION action = ROBOT::ACTION::HOLD;
-        return action;
+      // 4. 경로가 유효한 경우 다음 위치로 이동
+    if (pathInfo.currentPath.size() >= 2) {
+        Coord nextPos = pathInfo.currentPath[1];
+        
+        // 참고: on_info_updated 함수에서 이미 경로에 벽이 있는지 확인하고 재계산하므로
+        // 여기서 다시 확인할 필요가 없습니다.
+          // 이동 방향 계산 및 이동 실행
+        Coord direction(nextPos.x - robot.get_coord().x, nextPos.y - robot.get_coord().y);
+        pathInfo.lastMovement = direction;
+        
+        // 이동 횟수 증가
+        pathInfo.movesSinceLastDestUpdate++;
+        
+        // 경로에서 현재 위치 제거
+        pathInfo.currentPath.erase(pathInfo.currentPath.begin());
+        
+#ifdef DRONE_PATH_VISUALIZATION
+        cout << "드론 " << robot.id << "가 " << robot.get_coord() 
+            << "에서 " << nextPos << "로 이동. 남은 경로 길이: " 
+            << pathInfo.currentPath.size() << ", 목적지까지 이동 횟수: " 
+            << pathInfo.movesSinceLastDestUpdate << endl;
+#endif
+        
+        // 다음 위치로 이동하는 액션 반환
+        return getNextAction(robot.get_coord(), nextPos);
     }
+    
+    // 기본 동작: 제자리에 있기
+    return ROBOT::ACTION::HOLD;
 }
 
 void Scheduler::visualizeDronePaths(const vector<vector<OBJECT>>& known_object_map,
@@ -561,57 +675,60 @@ void Scheduler::visualizeDronePaths(const vector<vector<OBJECT>>& known_object_m
             visualMap[pos.x][pos.y] = 'D';  // 드론 위치
 
             // 드론 번호도 표시
-            cout << "Drone " << robot->id << " position: (" << pos.x << ", " << pos.y << ")" << endl;
+            cout << "드론 " << robot->id << " 위치: (" << pos.x << ", " << pos.y << ")" << endl;
         }
     }
 
-    // 각 드론의 경로와 웨이포인트 표시
+    // 각 드론의 경로와 목적지 표시
     for (const auto& pair : dronePaths) {
         int droneId = pair.first;
         const DronePathInfo& pathInfo = pair.second;
 
-        // 웨이포인트 위치 표시
-        for (size_t i = 0; i < pathInfo.waypoints.size(); i++) {
-            const Coord& wp = pathInfo.waypoints[i];
-
-            // 현재 목표 웨이포인트는 'W'로, 나머지는 'w'로 표시
-            if (i == pathInfo.currentWaypointIndex) {
-                visualMap[wp.x][wp.y] = 'W';  // 현재 웨이포인트
-            }
-            else if (visualMap[wp.x][wp.y] != 'D' && visualMap[wp.x][wp.y] != 'W') {
-                visualMap[wp.x][wp.y] = 'w';  // 다른 웨이포인트
+        // 목적지 표시
+        if (pathInfo.initialized) {
+            const Coord& dest = pathInfo.targetDestination;
+            // 목적지는 'G'로 표시 (드론이 아닌 경우)
+            if (visualMap[dest.x][dest.y] != 'D') {
+                visualMap[dest.x][dest.y] = 'G';  // 목적지
             }
         }
 
-        // 현재 경로 표시 (웨이포인트로 가는 경로)
+        // 현재 경로 표시
         for (const Coord& pathPoint : pathInfo.currentPath) {
-            // 경로상의 지점이 드론, 현재 웨이포인트, 다른 웨이포인트가 아닌 경우만 표시
+            // 경로상의 지점이 드론 또는 목적지가 아닌 경우만 표시
             if (visualMap[pathPoint.x][pathPoint.y] != 'D' &&
-                visualMap[pathPoint.x][pathPoint.y] != 'W' &&
-                visualMap[pathPoint.x][pathPoint.y] != 'w') {
+                visualMap[pathPoint.x][pathPoint.y] != 'G') {
                 visualMap[pathPoint.x][pathPoint.y] = '*';  // 경로 지점
             }
         }
 
         // 드론의 정보 출력
-        cout << "Drone " << droneId << " (Region " << pathInfo.assignedRegion << "):" << endl;
-        cout << " - Current waypoint index: " << pathInfo.currentWaypointIndex
-            << " of " << pathInfo.waypoints.size() << endl;
-
-        // 현재 목표 웨이포인트 출력
-        if (pathInfo.currentWaypointIndex < pathInfo.waypoints.size()) {
-            cout << " - Target waypoint: ("
-                << pathInfo.waypoints[pathInfo.currentWaypointIndex].x << ", "
-                << pathInfo.waypoints[pathInfo.currentWaypointIndex].y << ")" << endl;
+        cout << "드론 " << droneId << " 정보:" << endl;
+        
+        // 현재 목표 목적지 출력
+        if (pathInfo.initialized) {
+            cout << " - 목적지: ("
+                << pathInfo.targetDestination.x << ", "
+                << pathInfo.targetDestination.y << ")" << endl;
+            
+            // 마지막 이동 방향 출력 (있는 경우)
+            if (pathInfo.lastMovement.x != 0 || pathInfo.lastMovement.y != 0) {
+                cout << " - 마지막 이동 방향: (" 
+                    << pathInfo.lastMovement.x << ", " 
+                    << pathInfo.lastMovement.y << ")" << endl;
+            }
+            
+            // 현재 이동 횟수 출력
+            cout << " - 마지막 목적지 갱신 이후 이동 횟수: " 
+                << pathInfo.movesSinceLastDestUpdate << endl;
         }
 
         // 현재 경로 길이 출력
-        cout << " - Current path length: " << pathInfo.currentPath.size() << endl;
+        cout << " - 현재 경로 길이: " << pathInfo.currentPath.size() << endl;
     }
 
     // 맵 시각화 출력
-    cout << "Map Visualization:" << endl;
-
+    cout << "맵 시각화:" << endl;
 
     // 맵 격자 및 행 번호 출력 (y축 역순으로 - 위에서 아래로)
     for (int y = mapSize - 1; y >= 0; y--) {
@@ -630,15 +747,14 @@ void Scheduler::visualizeDronePaths(const vector<vector<OBJECT>>& known_object_m
     cout << endl;
 
     // 범례 출력
-    cout << "Legend: " << endl;
-    cout << " - D: Drone" << endl;
-    cout << " - W: Current waypoint" << endl;
-    cout << " - w: Other waypoint" << endl;
-    cout << " - *: Path point" << endl;
-    cout << " - #: Wall" << endl;
-    cout << " - ?: Unknown area" << endl;
-    cout << " - .: Empty space" << endl;
-    cout << " - T: Task" << endl;
+    cout << "범례: " << endl;
+    cout << " - D: 드론" << endl;
+    cout << " - G: 목적지" << endl;
+    cout << " - *: 경로 지점" << endl;
+    cout << " - #: 벽" << endl;
+    cout << " - ?: 미지 지역" << endl;
+    cout << " - .: 빈 공간" << endl;
+    cout << " - T: 작업" << endl;
     cout << endl;
 #endif // DRONE_PATH_VISUALIZATION
 }
