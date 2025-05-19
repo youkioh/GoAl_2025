@@ -13,7 +13,8 @@ int main()
     set<Coord> observed_coords;
     set<Coord> updated_coords;
 
-    srand(static_cast<unsigned int>(time(NULL)));
+    // srand(static_cast<unsigned int>(time(NULL)));
+    srand(0);
 
     TIMER timer;
     MAP map(MAP_SIZE, NUM_ROBOT, NUM_INITIAL_TASKS, NUM_MAX_TASKS, WALL_DENSITY, ROBOT_ENERGY);
