@@ -2,6 +2,7 @@
 #define SIMULATER_H_
 
 // #define VERBOSE
+// #define DRONE_PATH_VISUALIZATION
 
 #include <iostream>
 #include <vector>
