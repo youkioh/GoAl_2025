@@ -152,17 +152,75 @@ int Scheduler::countUnknownCellsInPath(const vector<Coord>& path,
     return count;
 }
 
+double Scheduler::countCellsToReveal(const vector<Coord>& path,
+                                const vector<vector<OBJECT>>& known_object_map) {
+    double score = 0.0;
+
+    set<Coord> CellsToObserve;
+
+    // path를 순회하며 observe하게 되는 모든 cell을 CellsToObserve에 추가
+    for (const auto& coord : path) {
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dy = -2; dy <= 2; dy++) {
+                Coord neighbor(coord.x + dx, coord.y + dy);
+                
+                // 맵 범위 내에 있는지 확인
+                if (neighbor.x >= 0 && neighbor.x < known_object_map.size() &&
+                    neighbor.y >= 0 && neighbor.y < known_object_map.size()) {
+                    // 알려지지 않은 셀인 경우
+                    if (isUnknownCell(neighbor, known_object_map)) {
+                        CellsToObserve.insert(neighbor);
+                    }
+                }
+            }
+        }
+    }
+
+    // CellsToObserve에 있는 셀들에서 unknown 셀의 개수를 세어 점수 계산
+    for (const auto& coord : CellsToObserve) {
+        if (isUnknownCell(coord, known_object_map)) {
+            score += 1.0;
+        }
+    }
+
+    return score;
+}
+
 double Scheduler::oldBonusInPath(const vector<Coord>& path,
                             const vector<vector<OBJECT>>& known_object_map) {
     double bonus = 0.0;
+    set<Coord> CellsToObserve;
+
+    // path를 순회하며 observe하게 되는 모든 cell을 CellsToObserve에 추가
     for (const auto& coord : path) {
-        // 셀이 알려지지 않은 셀인지 확인
-        if (isUnknownCell(coord, known_object_map)) {
-            continue; // 알려지지 않은 셀은 건너뜀
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dy = -2; dy <= 2; dy++) {
+                Coord neighbor(coord.x + dx, coord.y + dy);
+                
+                // 맵 범위 내에 있는지 확인
+                if (neighbor.x >= 0 && neighbor.x < known_object_map.size() &&
+                    neighbor.y >= 0 && neighbor.y < known_object_map.size()) {
+                    // 알려지지 않은 셀인 경우
+                    if (isUnknownCell(neighbor, known_object_map)) {
+                        CellsToObserve.insert(neighbor);
+                    }
+                }
+            }
         }
+    }
+
+    // CellsToObserve에 있는 셀들의 점수 계산
+    for (const auto& coord : CellsToObserve) {
+        // 셀의 마지막 관찰 시간 가져오기
+        int lastObservedTime = last_observed_time_map[coord.x][coord.y];
         
-        // 보너스 점수는 0.0에서 1.0 사이로 제한
-        bonus += (current_time - last_observed_time_map[coord.x][coord.y]) / max_time;
+        // 아직 관찰하지 않은 셀은 0점으로 처리
+        if (lastObservedTime == -1) {
+            bonus += 0.0;
+        } else {
+            // 보너스 점수 계산 (현재 시간과 마지막 관찰 시간 차이)
+            bonus += (current_time - lastObservedTime) / static_cast<double>(max_time);
+        }
     }
 
     return bonus;    
@@ -182,7 +240,7 @@ double Scheduler::calculateBaseScore(const Coord& position,
     }
     
     // 경로에서 알려지지 않은 셀 수 계산
-    double newCells = static_cast<double>(countUnknownCellsInPath(path, known_object_map));
+    double newCells = countCellsToReveal(path, known_object_map);
 
     double oldBonus = 0.0;
 
@@ -355,6 +413,11 @@ Coord Scheduler::findBestDestination(const Coord& dronePosition,
                                   return a.score < b.score;
                               });
     
+#ifdef DRONE_PATH_VISUALIZATION
+    // bestCell의 점수 표시
+    cout << "Best cell: " << bestCell->position << ", Score: " << bestCell->score << endl;
+#endif
+
     return bestCell->position;
 }
 
