@@ -65,6 +65,14 @@ public:
                               const ROBOT &robot);
 
 private:
+
+    // 내부시간 카운터
+    int max_time;
+    int current_time;
+
+    // 각 셀에 마지막으로 방문한 시간 정보
+    vector<vector<int>> last_observed_time_map;
+
     // 초기화가 완료되었는지 확인하는 플래그
     bool initialized;
     
@@ -98,6 +106,10 @@ private:
     // 맵 중심에서의 확산 보너스 점수 계산
     double calculateSpreadBonusScore(const Coord &position,
                                   const vector<vector<OBJECT>> &known_object_map);
+
+    // 경로에서 오래 전에 방문한 셀에 대한 보너스 점수 계산
+    double oldBonusInPath(const vector<Coord> &path,
+                       const vector<vector<OBJECT>> &known_object_map);
     
     // 최적의 목적지 찾기
     Coord findBestDestination(const Coord &dronePosition,
