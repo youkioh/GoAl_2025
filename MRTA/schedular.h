@@ -107,6 +107,9 @@ private:
     double calculateSpreadBonusScore(const Coord &position,
                                   const vector<vector<OBJECT>> &known_object_map);
 
+    double countCellsToReveal(const vector<Coord>& path,
+                                const vector<vector<OBJECT>>& known_object_map)
+
     // 경로에서 오래 전에 방문한 셀에 대한 보너스 점수 계산
     double oldBonusInPath(const vector<Coord> &path,
                        const vector<vector<OBJECT>> &known_object_map);
