@@ -12,7 +12,8 @@
 #include <functional>
 #include <cstdio>
 #include <chrono>
-#include <conio.h>
+// #include <conio.h>
+#include <memory>
 #include <sstream>
 #include <fstream>
 
