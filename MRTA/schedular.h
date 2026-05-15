@@ -28,6 +28,13 @@ struct CellScore {
     }
 };
 
+struct Chromosome {
+    vector<int> task_seq;      // Task ID의 순열 (예: [3, 1, 4, 2])
+    vector<int> robot_assign;  // 각 Task 인덱스에 매핑되는 Robot ID (예: [10, 11, 10, 12])
+    float cost;                // 해당 스케줄링의 총 비용
+    float fitness;               // 평가된 Fitness (높을수록 좋음)
+};
+
 class Scheduler
 {
 public:
@@ -178,7 +185,7 @@ private:
 
     /*Task Scheduling*/
 
-        // Drone 제외 robot scheduling을 위한 solution sequence and path
+    // Drone 제외 robot scheduling을 위한 solution sequence and path
     vector<Scheduler::Point> sol_seq;
     vector<pair<int, vector<pair<int, int>>>> sol_path;
 
