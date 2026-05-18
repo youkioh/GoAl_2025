@@ -39,7 +39,7 @@ void Scheduler::on_info_updated(const set<Coord>& observed_coords,
     const vector<vector<vector<int>>>& known_cost_map,
     const vector<vector<OBJECT>>& known_object_map,
     const vector<shared_ptr<TASK>>& active_tasks,
-    const vector<shared_ptr<ROBOT>>& robots) {
+    const vector<shared_ptr<ROBOT>>& ) {
 
     // 아직 초기화되지 않았으면 초기화
     if (!initialized) {
@@ -986,32 +986,6 @@ void Scheduler::visualizeDronePaths(const vector<vector<OBJECT>>& known_object_m
 //////////////////Task Scheduling Section./////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////
 
-// solution sequence mixing
-vector<Scheduler::Point> Scheduler::shuffle_point(vector<Scheduler::Point> array)
-{
-    random_device rd;                  // OS로부터 시드 받기
-    mt19937 g(rd());                   // Mersenne Twister 엔진 생성
-    shuffle(array.begin(), array.end(), g);
-    return array;
-}
-
-// two-opt swap 사용
-vector<Scheduler::Point> Scheduler::two_opt_swap(const vector<Point>& route, int i, int k) {
-    vector<Point> new_route;
-
-    // 1. i 이전 구간
-    new_route.insert(new_route.end(), route.begin(), route.begin() + i);
-
-    // 2. i ~ k 구간 (역순)
-    for (int idx = k; idx >= i; --idx)
-        new_route.push_back(route[idx]);
-
-    // 3. k 이후 구간
-    new_route.insert(new_route.end(), route.begin() + k + 1, route.end());
-
-    return new_route;
-}
-
 // 발견된 task를 scheduling
 void Scheduler::schedule_tasks(const vector<vector<vector<int>>>& known_cost_map,
     const vector<vector<OBJECT>>& known_object_map,
@@ -1079,127 +1053,161 @@ void Scheduler::schedule_tasks(const vector<vector<vector<int>>>& known_cost_map
     } while (cost >= 100000); // 일정 코스트 이상인 경우 simulated annealing 재실행
 }
 
-vector<Scheduler::Point> Scheduler::simulated_annealing(
-    const vector<Scheduler::Point>& initial_points, const vector<vector<vector<int>>>& known_cost_map, vector<pair<int, vector<pair<int, int>>>>& path, int& cost,
-    double start_temp,
-    double end_temp,
-    double cooling_rate,
-    int max_iterations
-) {
-    vector<Scheduler::Point> current = initial_points;
-    vector<Scheduler::Point> best = current;
-    vector<pair<int, vector<pair<int, int>>>> current_path;
-    int current_cost = Scheduler::cost_function(known_cost_map, current, current_path);
-    int best_cost = current_cost;
-    path = current_path;
-    /*
-    for(int i = 0 ; i < current.size() ; i++){
-        cout<<"Type: "<<current[i].type<<" ID: "<< current[i].id<<endl;
-    }*/
-    double T = start_temp;
-    srand(time(nullptr));
-
-    for (int iter = 0; iter < max_iterations && T > end_temp; ++iter) {
-        vector<Point> next = current;
-        current_path.clear();
-
-        // two-opt swap
-        if (rand() % 2) {
-            int i = rand() % next.size();
-            int j = rand() % next.size();
-            while (i == 0) i = rand() % next.size();
-            while (i == j || j == 0) j = rand() % next.size();
-            if (i > j) swap(i, j);
-            //swap(next[i], next[j]);
-            next = two_opt_swap(next, i, j);
-        }
-        // 인접 원소 swap
-        else {
-            int i = rand() % (next.size() - 1);
-            while (i == 0) i = rand() % (next.size() - 1);
-            swap(next[i], next[i + 1]);
+void Scheduler::IntializePopulation(const vector<shared_ptr<TASK>> &active_tasks, vector<Chromosome>& population, int population_size)
+{
+    population.clear();
+    int num_tasks = active_tasks.size();
+    int robot_pool[4] = {1, 2, 4, 5};
+    for (int i = 0; i < population_size; i++) {
+        Chromosome sol;
+        for (const auto& task : active_tasks) {
+            sol.task_seq.push_back(task->id);
         }
 
-        int next_cost = Scheduler::cost_function(known_cost_map, next, current_path);
-        int delta = next_cost - current_cost;
+        shuffle(sol.task_seq.begin(), sol.task_seq.end(), g);
 
-        if (delta < 0 || exp(-delta / T) >(rand() / (double)RAND_MAX)) {
-            current = next;
-            current_cost = next_cost;
-
-            if (current_cost < best_cost) {
-                best = current;
-                best_cost = current_cost;
-                path = current_path;
-                //cout<<"current cost ("<<iter<<"): "<<best_cost<<endl;
-            }
+        for (int j = 0; j < num_tasks; j++) {
+            sol.robot_assign.push_back(robot_pool[rand() % 4]); // caterpilar, wheel 중에서 랜덤하게 로봇 할당
         }
-        T *= cooling_rate;
+
+        population.push_back(sol);
     }
-
-    /*
-    for(int i = 0 ; i < best.size() ; i++){
-        cout<<"Type: "<<best[i].type<<" ID: "<<best[i].id<<endl;
-    }
-
-    for(auto i : path)
-    {
-        cout<<"Path "<<i.first<<endl;
-        for(auto j : i.second){
-            cout<<"("<<j.first<<","<<j.second<<")";
-        }
-        cout<<endl;
-    }*/
-    cost = best_cost;
-    return best;
 }
 
-// sub-array별로 cost 계산 함수 호출
-int Scheduler::cost_function(const vector<vector<vector<int>>>& known_cost_map, vector<Point> array, vector<pair<int, vector<pair<int, int>>>>& path) {
-    vector<Point> sub_array;
-    vector<pair<int, int>> sub_path;
-    int cost = 0;
-    int robot_id = array[0].id;
-
-    sub_array.push_back(array[0]);
-    for (int i = 1; i < array.size(); i++) {
-        if (array[i].type < 2) {
-            cost += Scheduler::calculate_cost(known_cost_map, sub_array, sub_path);
-            path.push_back({ robot_id, sub_path });
-            sub_array.clear();
-            sub_array.push_back(array[i]);
-            sub_path.clear();
-            robot_id = array[i].id;
-            continue;
-        }
-        sub_array.push_back(array[i]);
+void Scheduler::Evaluate(const vector<vector<vector<int>>>& known_cost_map, const vector<shared_ptr<TASK>>& active_tasks, const vector<shared_ptr<ROBOT>>& robots, vector<Chromosome>& population) {
+    for (auto& sol : population) {
+        sol.cost = Scheduler::cost_function(known_cost_map, active_tasks, robots, sol);
+        sol.fitness = 1.0 / (1.0 + (double)sol.cost); // 비용이 낮을수록 적합도가 높음
     }
-    cost += Scheduler::calculate_cost(known_cost_map, sub_array, sub_path);
-    path.push_back({ robot_id, sub_path });
+}
 
+void Scheduler::Crossover(vector<Chromosome>& population, vector<Chromosome>& offspring, double crossover_rate = 0.6)
+{
+    int population_size = population.size();
+    int num_tasks = population[0].task_seq.size();
+    shuffle(population.begin(), population.end(), g);
+
+    offspring.clear();
+    for(int i = 0; i < population_size; i += 2) {
+        offspring.push_back(population[i]); // 부모1
+        offspring.push_back(population[i + 1]); // 부모2
+
+        if((rand() / (double)RAND_MAX) >= crossover_rate) continue;
+
+        int idx1, idx2;
+        idx1 = rand() % (num_tasks - 1);
+        idx2 = rand() % (num_tasks - idx1) + idx1;
+
+        // Task sequence crossover
+        for (int j = idx1; j <= idx2; j++) {
+            offspring[i].task_seq[j] = population[i + 1].task_seq[j];
+            offspring[i + 1].task_seq[j] = population[i].task_seq[j];
+        }
+
+        // Task sequence correction to ensure valid sequences (no duplicates)
+        std::map<int, int> map1, map2;
+        for (int j = idx1; j <= idx2; j++) {
+            map1[offspring[i].task_seq[j]] = offspring[i + 1].task_seq[j];
+            map2[offspring[i + 1].task_seq[j]] = offspring[i].task_seq[j];
+        }
+
+        for (int j = 0; j < num_tasks; j++) {
+            if(j >= idx1 && j <= idx2)
+                continue;
+
+            int val1 = offspring[i].task_seq[j];
+            while(map1.find(val1) != map1.end()) {
+                val1 = map1[val1];
+            }
+            offspring[i].task_seq[j] = val1;
+
+            int val2 = offspring[i + 1].task_seq[j];
+            while(map2.find(val2) != map2.end()) {
+                val2 = map2[val2];
+            }
+            offspring[i + 1].task_seq[j] = val2;
+        }
+    }
+}
+
+void Scheduler::Mutate(vector<Chromosome>& population, double mutation_rate = 0.1)
+{
+    int num_tasks = population[0].task_seq.size();
+    for (auto& sol : population) {
+        if ((rand() / (double)RAND_MAX) < mutation_rate) {
+            int idx1 = rand() % (num_tasks - 1);
+            int idx2 = rand() % (num_tasks - idx1) + idx1;
+            swap(sol.task_seq[idx1], sol.task_seq[idx2]); // Task sequence mutation (swap)
+        }
+    }
+}
+
+void Scheduler::Select(vector<Chromosome>& population, vector<Chromosome>& offspring)
+{
+    int population_size = population.size();
+
+    vector<Chromosome> combined = population;
+    combined.insert(combined.end(), offspring.begin(), offspring.end());
+    population.clear();
+
+    // 비용이 낮은 순으로 정렬
+    sort(combined.begin(), combined.end());
+
+    // Elitism
+    population.push_back(combined[0]);
+
+    // Roulette Wheel Selection
+    double total_fitness = 0.0;
+    for (const auto& sol : combined) {
+        total_fitness += sol.fitness;
+    }
+    for (int i = 1; i < population_size; i++) {
+        double pick = (rand() / (double)RAND_MAX) * total_fitness;
+        double current = 0.0;
+        for (const auto& sol : combined) {
+            current += sol.fitness;
+            if (current >= pick) {
+                population.push_back(sol);
+                break;
+            }
+        }
+    }
+}
+
+int Scheduler::cost_function(const vector<vector<vector<int>>>& known_cost_map, const vector<shared_ptr<TASK>>& active_tasks, const vector<shared_ptr<ROBOT>>& robots, Chromosome& chromosome)
+{
+    int cost = 0;
+    vector<vector<int>> sub_sol(robots.size()); // 각 로봇별로 할당된 태스크 시퀀스 저장
+    for (int i = 0; i < chromosome.task_seq.size(); i++) {
+        sub_sol[chromosome.robot_assign[i]].push_back(chromosome.task_seq[i]);
+    }
+
+    for (int i = 0; i < sub_sol.size(); i++) {
+        if (sub_sol[i].empty()) continue;
+        cost += Scheduler::calculate_cost(known_cost_map, active_tasks, robots, i, sub_sol[i]);
+    }
     return cost;
 }
 
-// sub-array의 cost 계산
-int Scheduler::calculate_cost(const vector<vector<vector<int>>>& known_cost_map, vector<Point> array, vector<pair<int, int>>& path) {
+int Scheduler::calculate_cost(const vector<vector<vector<int>>>& known_cost_map, const vector<shared_ptr<TASK>>& active_tasks, const vector<shared_ptr<ROBOT>>& robots, const int robotId, const vector<int>& sol_seq)
+{
     int cost = 0;
-    vector<pair<int, int>> sub_path;
-    for (int i = 0; i < array.size() - 1; i++) {
-        int dist = 0;
-        dist = Scheduler::calculate_distance(known_cost_map, make_pair(array[i].x, array[i].y), make_pair(array[i + 1].x, array[i + 1].y), array[0].type, sub_path);
-        cost += dist;
-        cost += array[i + 1].cost[array[0].type];
-        if (dist >= 100000) continue;
-
-        if (i != array.size() - 2) {
-            sub_path.pop_back();
-            path.insert(path.end(), sub_path.begin(), sub_path.end());
-        }
-        else path.insert(path.end(), sub_path.begin(), sub_path.end());
+    pair<int, int> current_pos = { robots[robotId]->get_coord().x, robots[robotId]->get_coord().y };
+    for (int taskId : sol_seq) {
+        auto task = find_if(active_tasks.begin(), active_tasks.end(), [taskId](const shared_ptr<TASK>& t) {
+            return t->id == taskId;
+        });
+        
+        if (task == active_tasks.end()) continue; // (예외 처리) 태스크를 찾지 못한 경우
+        
+        pair<int, int> task_pos = { (*task)->coord.x, (*task)->coord.y };
+        vector<pair<int, int>> path;
+        cost += Scheduler::calculate_distance(known_cost_map, current_pos, task_pos, static_cast<int>(robots[robotId]->type), path);
+        cost += (*task)->get_cost(robots[robotId]->type);
+        current_pos = task_pos;
     }
 
-    if (cost > array[0].energy) return 100000 + cost;
-    if (cost <= 0) return 1000;
+    if(cost > robots[robotId]->get_energy()) return 100000 + cost; // 에너지 초과 시 큰 패널티
     return cost;
 }
 
@@ -1224,9 +1232,9 @@ int Scheduler::calculate_distance(const vector<vector<vector<int>>>& grid, pair<
             int nx = x + dx[dir], ny = y + dy[dir];
             if (nx >= 0 && ny >= 0 && nx < n && ny < m) {
                 //cout<<nx<<", "<<ny<<endl;
-                if (grid[nx][ny][robotType + 1] == INFINITE) continue;
-                if (grid[nx][ny][robotType + 1] < 0) continue;
-                int cost = (grid[x][y][robotType + 1] + grid[nx][ny][robotType + 1]) / 2;
+                if (grid[nx][ny][robotType] == INFINITE) continue;
+                if (grid[nx][ny][robotType] < 0) continue; // Todo: 미탐색 영역 처리
+                int cost = (grid[x][y][robotType] + grid[nx][ny][robotType]) / 2;
                 //cout<<"dist[x][y]: "<<dist[x][y]<<" cost: "<<cost<<" dist[nx][ny]: "<<dist[nx][ny]<<endl;
                 if (dist[x][y] + cost < dist[nx][ny]) {
                     dist[nx][ny] = dist[x][y] + cost;

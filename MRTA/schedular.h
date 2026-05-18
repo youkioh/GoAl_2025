@@ -5,6 +5,7 @@
 #include <random>  
 #include "simulator.h"
 #include <unordered_map>
+#include <map>
 
 
 // 드론 경로 및 탐색 상태를 나타내는 구조체
@@ -30,14 +31,20 @@ struct CellScore {
 
 struct Chromosome {
     vector<int> task_seq;      // Task ID의 순열 (예: [3, 1, 4, 2])
-    vector<int> robot_assign;  // 각 Task 인덱스에 매핑되는 Robot ID (예: [10, 11, 10, 12])
-    float cost;                // 해당 스케줄링의 총 비용
-    float fitness;               // 평가된 Fitness (높을수록 좋음)
+    vector<int> robot_assign;  // 각 Task 인덱스에 매핑되는 Robot ID (예: [1, 2, 3, 1])
+    int cost;                // 해당 스케줄링의 총 비용
+    double fitness;               // 평가된 Fitness (높을수록 좋음)
+
+    bool operator<(const Chromosome& other) const {
+        return fitness > other.fitness; // Fitness가 높을수록 우선순위가 높음
+    }
 };
 
 class Scheduler
 {
 public:
+    Scheduler() : g(rd()) {} 
+
     const int dx[4] = { -1, 1, 0, 0 };
     const int dy[4] = { 0, 0, -1, 1 };
 
@@ -189,6 +196,11 @@ private:
     vector<Scheduler::Point> sol_seq;
     vector<pair<int, vector<pair<int, int>>>> sol_path;
 
+    vector<Chromosome> population; // 유전 알고리즘을 위한 개체군
+    vector<Chromosome> offspring; // 유전 알고리즘을 위한 자손
+    Chromosome best_solution; // 최적 솔루션 저장
+    vector<pair<int, vector<pair<int, int>>>> best_solution_path; // 최적 솔루션의 경로 저장
+
     // Drone 제외 robot scheduling이 되었는지 확인
     bool scheduled;
     int n_sch;
@@ -199,26 +211,37 @@ private:
         const vector<shared_ptr<TASK>>& active_tasks,
         const vector<shared_ptr<ROBOT>>& robots);
 
-    // Robot, Task간 Dijkstra 기반 최단거리 계산
-    int calculate_distance(const vector<vector<vector<int>>>& grid, pair<int, int> start, pair<int, int> end, int robotType, vector<pair<int, int>>& path);
+    // Robot, Task간 Dijkstra 기반 cost 계산
+    int calculate_distance(const vector<vector<vector<int>>>& grid, 
+        pair<int, int> start, 
+        pair<int, int> end, int robotType, 
+        vector<pair<int, int>>& path);
 
-    // 각 Robot의 Cost 값 계산
-    int calculate_cost(const vector<vector<vector<int>>>& known_cost_map, vector<Point> array, vector<pair<int, int>>& path);
+    int cost_function(const vector<vector<vector<int>>>& known_cost_map, 
+        const vector<shared_ptr<TASK>>& active_tasks,
+        const vector<shared_ptr<ROBOT>>& robots, 
+        Chromosome& chromosome);
+    
+    int calculate_cost(const vector<vector<vector<int>>>& known_cost_map, 
+        const vector<shared_ptr<TASK>>& active_tasks,
+        const vector<shared_ptr<ROBOT>>& robots, 
+        const int robotId, 
+        const vector<int>& sol_seq);
 
-    // 전체 solution sequence의 cost 계산
-    int cost_function(const vector<vector<vector<int>>>& known_cost_map, vector<Point> array, vector<pair<int, vector<pair<int, int>>>>& path);
+    // Genetic algorithm을 위한 함수들
+    void IntializePopulation(const vector<shared_ptr<TASK>>& active_tasks, 
+        vector<Chromosome>& population, 
+        int population_size);
+    void Evaluate(const vector<vector<vector<int>>>& known_cost_map, 
+        const vector<shared_ptr<TASK>>& active_tasks,
+        const vector<shared_ptr<ROBOT>>& robots, 
+        vector<Chromosome>& population);
+    void Crossover(vector<Chromosome>& population, vector<Chromosome>& offspring, double crossover_rate = 0.6);
+    void Mutate(vector<Chromosome>& offspring, double mutation_rate = 0.1);
+    void Select(vector<Chromosome>& population, vector<Chromosome>& offspring);
 
-    // Simulated annealing 기반 최적 scheduling 탐색
-    vector<Scheduler::Point> simulated_annealing(
-        const vector<Scheduler::Point>& initial_points, const vector<vector<vector<int>>>& known_cost_map, vector<pair<int, vector<pair<int, int>>>>& path, int& cost,
-        double start_temp = 10000.0,
-        double end_temp = 1e-3,
-        double cooling_rate = 0.999,
-        int max_iterations = 10000
-    );
-
-    // Random한 solution sequence 생성
-    vector<Scheduler::Point> shuffle_point(vector<Scheduler::Point> array);
-    vector<Scheduler::Point> two_opt_swap(const vector<Point>& route, int i, int k);
+    // Random number generator
+    random_device rd;          
+    mt19937 g;
 };
 #endif SCHEDULER_H_
