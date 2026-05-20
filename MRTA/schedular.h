@@ -34,9 +34,10 @@ struct Chromosome {
     vector<int> robot_assign;  // 각 Task 인덱스에 매핑되는 Robot ID (예: [1, 2, 3, 1])
     int cost;                // 해당 스케줄링의 총 비용
     double fitness;               // 평가된 Fitness (높을수록 좋음)
+    vector<vector<pair<int, int>>> path; // 각 Robot이 Task를 수행하기 위해 이동하는 경로 (예: Robot 1의 경로, Robot 2의 경로, ...)
 
     bool operator<(const Chromosome& other) const {
-        return fitness > other.fitness; // Fitness가 높을수록 우선순위가 높음
+        return this->fitness > other.fitness; // Fitness가 높을수록 우선순위가 높음
     }
 };
 
@@ -98,7 +99,7 @@ private:
     vector<vector<int>> last_observed_time_map;
 
     // 초기화가 완료되었는지 확인하는 플래그
-    bool initialized;
+    bool initialized = false;
 
     // 로봇 ID에 따른 경로 정보 맵
     unordered_map<int, DronePathInfo> dronePaths;
@@ -199,14 +200,19 @@ private:
     vector<Chromosome> population; // 유전 알고리즘을 위한 개체군
     vector<Chromosome> offspring; // 유전 알고리즘을 위한 자손
     Chromosome best_solution; // 최적 솔루션 저장
-    vector<pair<int, vector<pair<int, int>>>> best_solution_path; // 최적 솔루션의 경로 저장
+    vector<vector<pair<int, int>>> best_solution_path; // 최적 솔루션의 경로 저장
+
+    vector<int> task_status; // 각 Task의 상태를 나타내는 벡터 (예: 0 = 미할당, 1 = 할당됨, 2 = 완료)
 
     // Drone 제외 robot scheduling이 되었는지 확인
-    bool scheduled;
-    int n_sch;
+    bool scheduled = false;
 
     // 주어진 맵 정보 따라 scheduling 수행
-    void schedule_tasks(const vector<vector<vector<int>>>& known_cost_map,
+    void initial_scheduling(const vector<vector<vector<int>>>& known_cost_map,
+        const vector<vector<OBJECT>>& known_object_map,
+        const vector<shared_ptr<TASK>>& active_tasks,
+        const vector<shared_ptr<ROBOT>>& robots);
+    void update_scheduling(const vector<vector<vector<int>>>& known_cost_map,
         const vector<vector<OBJECT>>& known_object_map,
         const vector<shared_ptr<TASK>>& active_tasks,
         const vector<shared_ptr<ROBOT>>& robots);
@@ -216,28 +222,35 @@ private:
         pair<int, int> start, 
         pair<int, int> end, int robotType, 
         vector<pair<int, int>>& path);
-
     int cost_function(const vector<vector<vector<int>>>& known_cost_map, 
         const vector<shared_ptr<TASK>>& active_tasks,
         const vector<shared_ptr<ROBOT>>& robots, 
         Chromosome& chromosome);
-    
     int calculate_cost(const vector<vector<vector<int>>>& known_cost_map, 
         const vector<shared_ptr<TASK>>& active_tasks,
         const vector<shared_ptr<ROBOT>>& robots, 
         const int robotId, 
-        const vector<int>& sol_seq);
+        const vector<int>& sol_seq,
+        vector<pair<int, int>>& path);
+    int update_path(const vector<vector<vector<int>>>& known_cost_map, 
+        const ROBOT& robot, 
+        Chromosome& chromosome);
 
     // Genetic algorithm을 위한 함수들
-    void IntializePopulation(const vector<shared_ptr<TASK>>& active_tasks, 
+    void InitializePopulation(const vector<shared_ptr<TASK>>& active_tasks, 
         vector<Chromosome>& population, 
         int population_size);
+    void UpdatePopulation(const vector<shared_ptr<TASK>>& active_tasks, 
+        vector<Chromosome>& population,
+        const vector<int>& completed_tasks,
+        const vector<int>& new_active_tasks);
     void Evaluate(const vector<vector<vector<int>>>& known_cost_map, 
         const vector<shared_ptr<TASK>>& active_tasks,
         const vector<shared_ptr<ROBOT>>& robots, 
         vector<Chromosome>& population);
     void Crossover(vector<Chromosome>& population, vector<Chromosome>& offspring, double crossover_rate = 0.6);
-    void Mutate(vector<Chromosome>& offspring, double mutation_rate = 0.1);
+    void Mutate_Task(vector<Chromosome>& offspring, double mutation_rate = 0.1);
+    void Mutate_Robot(vector<Chromosome>& population, double mutation_rate = 0.1);
     void Select(vector<Chromosome>& population, vector<Chromosome>& offspring);
 
     // Random number generator

@@ -19,7 +19,7 @@ int main()
     cout << "Random Seed:" << t << endl;
 
     srand(static_cast<unsigned int>(t));
-    //srand(1749356593);
+    // srand(1749356593);
 
     TIMER timer;
     MAP map(MAP_SIZE, NUM_ROBOT, NUM_INITIAL_TASKS, NUM_MAX_TASKS, WALL_DENSITY, ROBOT_ENERGY);
@@ -44,17 +44,14 @@ int main()
         observed_coords = map.observed_coord_by_robot();
         updated_coords = map.update_coords(observed_coords);
 #ifdef VERBOSE
-        cout << "Time : " << time << endl;
-        map.print_object_map();
-        map.print_robot_summary();
-        map.print_task_summary();
+
+    cout << "Time : " << time << endl;
+    map.print_object_map();
+    map.print_robot_summary();
+    map.print_task_summary();
+
+
 #endif // VERBOSE
-        // if (time % 250 == 1){
-        //     cout << "Time : " << time << endl;
-        //     map.print_object_map();
-        //     map.print_robot_summary();
-        //     map.print_task_summary();
-        // }
 
         timer.start();
         scheduler.on_info_updated(observed_coords,
