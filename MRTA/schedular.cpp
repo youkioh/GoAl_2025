@@ -9,7 +9,7 @@
 #include <cmath>
 #include <unordered_set>
 
-#define DRONE_PATH_VISUALIZATION
+// #define DRONE_PATH_VISUALIZATION
 
 #define EID_UNKNOWN_WEIGHT    1.0   // unknown 셀 기여 가중치
 #define EID_STALENESS_WEIGHT  0.5   // 오래된 known 셀 기여 가중치
@@ -77,16 +77,13 @@ void Scheduler::on_info_updated(const set<Coord>& observed_coords,
     if (!updated_coords.empty()) {
         // 새 task 발견 시 robot re-scheduling
         if (scheduled) {
-            // for (auto uc : updated_coords)
-            // {
-            //     if (known_object_map[uc.x][uc.y] == OBJECT::TASK)
-            //     {
-            //         //cout << "Robot Scheduling Start" << endl;
-            //         update_scheduling(known_cost_map, known_object_map, active_tasks, robots);
-            //         //cout << "Robot Scheduling "<<n_sch++<<" Completed" << endl;
-            //         break;
-            //     }
-            // }
+            for (auto uc : updated_coords)
+            {
+                if (known_object_map[uc.x][uc.y] == OBJECT::TASK)
+                {
+                    cout << "New task detected at (" << uc.x << ", " << uc.y << "). At time " << current_time << endl;
+                }
+            }
             update_scheduling(known_cost_map, known_object_map, active_tasks, robots);
         }
 
@@ -134,15 +131,14 @@ ROBOT::ACTION Scheduler::idle_action(const set<Coord>& observed_coords,
         if (scheduled) {
             auto& sol_path = best_solution_path[robot.id];
             if(sol_path.empty()) return ROBOT::ACTION::HOLD;
-            #ifdef VERBOSE
-            cout << "Robot " << robot.id << " (" << robot.type << ") best solution path: ";
-            for (const auto& step : sol_path) {
-                cout << "(" << step.first << ", " << step.second << ") ";
-            }
-            #endif
+            // #ifdef VERBOSE
+            // cout << "Robot " << robot.id << " (" << robot.type << ") best solution path: ";
+            // for (const auto& step : sol_path) {
+            //     cout << "(" << step.first << ", " << step.second << ") ";
+            // }
+            // #endif
 
             nextPos = Coord(sol_path[0].first, sol_path[0].second);
-            cout<< "Robot " << robot.id << " current position: " << robot.get_coord() << ", next position: " << nextPos << endl;
             //if(robot.get_coord() == nextPos) {
                 sol_path.erase(sol_path.begin());
                 // nextPos = Coord(sol_path[0].first, sol_path[0].second);
@@ -732,7 +728,7 @@ void Scheduler::update_scheduling(const vector<vector<vector<int>>>& known_cost_
 
     if(!completed_tasks.empty() || !new_active_tasks.empty()) {
         UpdatePopulation(active_tasks, population, completed_tasks, new_active_tasks);
-        GENERATIONS = 100; // 새로운 task가 발견되면 더 많은 세대 동안 진화
+        GENERATIONS = 200; // 새로운 task가 발견되면 더 많은 세대 동안 진화
     }
 
     for(int i = 0; i < GENERATIONS; i++) {
@@ -906,6 +902,7 @@ void Scheduler::Mutate_Task(vector<Chromosome>& population, double mutation_rate
 void Scheduler::Mutate_Robot(vector<Chromosome>& population, double mutation_rate)
 {
     int num_tasks = population[0].task_seq.size();
+    if(num_tasks < 1) return;
     const int robot_pool[4] = {1, 2, 4, 5};
     for (auto& sol : population) {
         if ((rand() / (double)RAND_MAX) < mutation_rate) {
@@ -988,9 +985,10 @@ int Scheduler::calculate_cost(const vector<vector<vector<int>>>& known_cost_map,
         }
         current_pos = task_pos;
     }
-
-    if(cost > robots[robotId]->get_energy()) return (cost - robots[robotId]->get_energy()) * 1000 + cost; // 에너지 초과 시 큰 패널티
-    return cost;
+    int penalty = 0;
+    if(cost > robots[robotId]->get_energy()) penalty += (cost - robots[robotId]->get_energy()) * 1000;
+    if(current_time + cost > max_time) penalty += (current_time + cost - max_time) * 100;
+    return cost + penalty;
 }
 
 
