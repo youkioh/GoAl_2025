@@ -130,21 +130,29 @@ ROBOT::ACTION Scheduler::idle_action(const set<Coord>& observed_coords,
         Coord nextPos;
         if (scheduled) {
             auto& sol_path = best_solution_path[robot.id];
-            if(sol_path.empty()) return ROBOT::ACTION::HOLD;
-            // #ifdef VERBOSE
-            // cout << "Robot " << robot.id << " (" << robot.type << ") best solution path: ";
-            // for (const auto& step : sol_path) {
-            //     cout << "(" << step.first << ", " << step.second << ") ";
-            // }
-            // #endif
+            if(!sol_path.empty()){
+                #ifdef VERBOSE
+                cout << "Robot " << robot.id << " (" << robot.type << ") best solution path: ";
+                for (const auto& step : sol_path) {
+                    cout << "(" << step.first << ", " << step.second << ") ";
+                }
+                #endif
 
-            nextPos = Coord(sol_path[0].first, sol_path[0].second);
-            //if(robot.get_coord() == nextPos) {
+                nextPos = Coord(sol_path[0].first, sol_path[0].second);
                 sol_path.erase(sol_path.begin());
-                // nextPos = Coord(sol_path[0].first, sol_path[0].second);
-            //}
 
-            return getNextAction(robot.get_coord(), nextPos);
+                return getNextAction(robot.get_coord(), nextPos);
+            }
+            else {
+                int remaining_time = max_time - current_time;
+                int energy_threshold = remaining_time * ROBOT::ROBOT_ENERGY_PER_TICK;
+                if (robot.get_energy() > energy_threshold) {
+                    return getLocalExplorationAction(robot, known_cost_map, known_object_map);
+                } 
+                else{
+                    return ROBOT::ACTION::HOLD; // 에너지가 낮으면 HOLD
+                }
+            }
         }
         else
             return ROBOT::ACTION::HOLD;
@@ -1040,4 +1048,60 @@ int Scheduler::calculate_distance(const vector<vector<vector<int>>>& grid, pair<
     }
     reverse(path.begin(), path.end());
     return dist[end.first][end.second];
+}
+
+// MRTA/schedular.cpp 내부
+
+ROBOT::ACTION Scheduler::getLocalExplorationAction(
+    const ROBOT& robot, 
+    const vector<vector<vector<int>>>& known_cost_map, 
+    const vector<vector<OBJECT>>& known_object_map) 
+{
+    Coord cur = robot.get_coord();
+    int mapSize = known_object_map.size();
+    int robotTypeIdx = static_cast<int>(robot.type);
+    
+    ROBOT::ACTION best_action = ROBOT::ACTION::HOLD;
+    int oldest_time = current_time + 1; 
+
+    // 핑퐁 방지를 위해 이전 위치 가져오기
+    Coord prev_pos = {-1, -1};
+    if (previous_positions.find(robot.id) != previous_positions.end()) {
+        prev_pos = previous_positions[robot.id];
+    }
+
+    for (int i = 0; i < 4; i++) {
+        int nx = cur.x + dx[i];
+        int ny = cur.y + dy[i];
+        Coord nextCoord(nx, ny);
+
+        // 1. 맵 밖이거나 방금 온 길이면 제외
+        if (nx < 0 || nx >= mapSize || ny < 0 || ny >= mapSize) continue;
+        if (nextCoord == prev_pos) continue;
+
+        // 2. 벽이거나 이동 불가 비용이면 제외
+        if (known_object_map[nx][ny] == OBJECT::WALL) continue;
+        if (known_object_map[nx][ny] != OBJECT::UNKNOWN && 
+            (known_cost_map[nx][ny][robotTypeIdx] < 0 || known_cost_map[nx][ny][robotTypeIdx] == INFINITE)) {
+            continue;
+        }
+
+        // 3. 관측 시간 확인 (Unknown이거나 제일 오래된 곳 선호)
+        int observed_time = last_observed_time_map[nx][ny];
+        if (observed_time == -1) {
+            // 미지의 영역(Unknown) 발견 시 최우선 이동
+            best_action = getNextAction(cur, nextCoord);
+            break; 
+        } else if (observed_time < oldest_time) {
+            oldest_time = observed_time;
+            best_action = getNextAction(cur, nextCoord);
+        }
+    }
+
+    // 다음 이동을 위해 현재 위치 저장
+    if (best_action != ROBOT::ACTION::HOLD) {
+        previous_positions[robot.id] = cur;
+    }
+
+    return best_action;
 }

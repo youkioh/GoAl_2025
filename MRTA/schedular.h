@@ -157,6 +157,8 @@ private:
 
     vector<int> task_status; // 각 Task의 상태를 나타내는 벡터 (예: 0 = 미할당, 1 = 할당됨, 2 = 완료)
 
+    std::unordered_map<int, Coord> previous_positions; // Robot ID별 이전 위치 저장
+
     // Drone 제외 robot scheduling이 되었는지 확인
     bool scheduled = false;
 
@@ -205,6 +207,11 @@ private:
     void Mutate_Task(vector<Chromosome>& offspring, double mutation_rate = 0.1);
     void Mutate_Robot(vector<Chromosome>& population, double mutation_rate = 0.1);
     void Select(vector<Chromosome>& population, vector<Chromosome>& offspring);
+
+    // Local exploration action 결정 (드론 제외)
+    ROBOT::ACTION getLocalExplorationAction(const ROBOT& robot,
+        const vector<vector<vector<int>>>& known_cost_map,
+        const vector<vector<OBJECT>>& known_object_map);
 
     // Random number generator
     random_device rd;          
