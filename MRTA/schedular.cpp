@@ -79,10 +79,12 @@ void Scheduler::on_info_updated(const set<Coord>& observed_coords,
         if (scheduled) {
             for (auto uc : updated_coords)
             {
+                #ifdef VERBOSE
                 if (known_object_map[uc.x][uc.y] == OBJECT::TASK)
                 {
                     cout << "New task detected at (" << uc.x << ", " << uc.y << "). At time " << current_time << endl;
                 }
+                #endif
             }
             update_scheduling(known_cost_map, known_object_map, active_tasks, robots);
         }
@@ -145,8 +147,9 @@ ROBOT::ACTION Scheduler::idle_action(const set<Coord>& observed_coords,
             }
             else {
                 int remaining_time = max_time - current_time;
-                int energy_threshold = remaining_time * ROBOT::ROBOT_ENERGY_PER_TICK;
+                int energy_threshold = remaining_time * ROBOT::ROBOT_ENERGY_PER_TICK * 1.2;
                 if (robot.get_energy() > energy_threshold) {
+                    cout << "Robot " << robot.id << " (" << robot.type << ") has no path but sufficient energy. Exploring locally." << endl;
                     return getLocalExplorationAction(robot, known_cost_map, known_object_map);
                 } 
                 else{
