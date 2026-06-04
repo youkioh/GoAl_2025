@@ -8,8 +8,37 @@
 #include <limits>
 #include <cmath>
 #include <unordered_set>
+#include <chrono>
 
-// #define DRONE_PATH_VISUALIZATION
+// ---- 타이밍 누적 ----
+struct TimingStats {
+    double beam_ms        = 0; int beam_calls        = 0;
+    double buildEID_ms    = 0; int buildEID_calls    = 0;
+    double crossover_ms   = 0; int crossover_calls   = 0;
+    double init_sched_ms  = 0;
+    double upd_sched_ms   = 0; int upd_sched_calls   = 0;
+};
+static TimingStats g_tm;
+
+void printTimingReport() {
+    auto pct = [](double part, double total) {
+        return total > 0 ? part / total * 100.0 : 0.0;
+    };
+    double total = g_tm.init_sched_ms + g_tm.upd_sched_ms
+                 + g_tm.beam_ms + g_tm.buildEID_ms;
+    fprintf(stderr, "\n=== TIMING REPORT (total: %.1fms) ===\n", total);
+    fprintf(stderr, "  initial_sched   : %8.1fms  %5.1f%%\n",
+            g_tm.init_sched_ms, pct(g_tm.init_sched_ms, total));
+    fprintf(stderr, "  update_sched    : %8.1fms  %5.1f%%  calls=%d\n",
+            g_tm.upd_sched_ms, pct(g_tm.upd_sched_ms, total), g_tm.upd_sched_calls);
+    fprintf(stderr, "  Crossover       : %8.1fms  (within GA)\n", g_tm.crossover_ms);
+    fprintf(stderr, "  beamSearch      : %8.1fms  %5.1f%%  calls=%d\n",
+            g_tm.beam_ms,      pct(g_tm.beam_ms, total),      g_tm.beam_calls);
+    fprintf(stderr, "  buildEIDMap     : %8.1fms  %5.1f%%  calls=%d\n",
+            g_tm.buildEID_ms,  pct(g_tm.buildEID_ms, total),  g_tm.buildEID_calls);
+    fprintf(stderr, "=====================================\n");
+}
+// ---- 타이밍 끝 ----
 
 #define EID_UNKNOWN_WEIGHT    1.0   // unknown 셀 기여 가중치
 #define EID_STALENESS_WEIGHT  0.5   // 오래된 known 셀 기여 가중치
@@ -279,6 +308,7 @@ void Scheduler::buildEIDMap(const vector<vector<vector<int>>>& known_cost_map,
     const vector<vector<OBJECT>>& known_object_map,
     const vector<shared_ptr<ROBOT>>& robots) {
 
+    auto _t0 = chrono::high_resolution_clock::now();
     int mapSize = known_object_map.size();
     double maxDist = sqrt(2.0) * mapSize;
 
@@ -314,6 +344,8 @@ void Scheduler::buildEIDMap(const vector<vector<vector<int>>>& known_cost_map,
             }
         }
     }
+    g_tm.buildEID_ms += chrono::duration<double, milli>(chrono::high_resolution_clock::now() - _t0).count();
+    g_tm.buildEID_calls++;
 }
 
 // 위치 pos의 ±2 관측 범위를 인코딩된 정수 집합으로 반환
@@ -343,6 +375,8 @@ vector<Coord> Scheduler::beamSearchTrajectory(
     int beamWidth,
     const vector<vector<vector<int>>>& known_cost_map,
     const vector<vector<OBJECT>>& known_object_map) {
+
+    auto beam_start = chrono::high_resolution_clock::now();
 
     int mapSize = known_cost_map.size();
     int droneIdx = static_cast<int>(ROBOT::TYPE::DRONE);
@@ -424,12 +458,18 @@ vector<Coord> Scheduler::beamSearchTrajectory(
         beams = move(next);
     }
 
-    if (beams.empty()) return { dronePos };
+    vector<Coord> result;
+    if (beams.empty()) {
+        result = { dronePos };
+    } else {
+        auto best = max_element(beams.begin(), beams.end(),
+            [](const Beam& a, const Beam& b) { return a.eid_sum < b.eid_sum; });
+        result = best->path;
+    }
 
-    auto best = max_element(beams.begin(), beams.end(),
-        [](const Beam& a, const Beam& b) { return a.eid_sum < b.eid_sum; });
-
-    return best->path;
+    g_tm.beam_ms += chrono::duration<double, milli>(chrono::high_resolution_clock::now() - beam_start).count();
+    g_tm.beam_calls++;
+    return result;
 }
 
 // 모든 드론의 궤적을 순차적으로 계획
@@ -612,6 +652,15 @@ void Scheduler::visualizeDronePaths(const vector<vector<OBJECT>>& known_object_m
     const vector<shared_ptr<ROBOT>>& robots) {
 #ifdef DRONE_PATH_VISUALIZATION
     cout << "현재 시뮬레이션 시간: " << current_time << endl;
+    cout << "발견된 작업 개수: " << found_tasks_count << endl;
+    cout << "드론 에너지 예산: " << initialDroneEnergy * DRONE_ENERGY_BUDGET << endl;
+    cout << "현재 드론의 에너지: ";
+    for (const auto& robot : robots) {
+        if (robot->type == ROBOT::TYPE::DRONE) {
+            cout << "드론 " << robot->id << ": " << robot->get_energy() << " ";
+        }
+    }
+    cout << endl;
 
     int mapSize = known_object_map.size();
     vector<vector<char>> visualMap(mapSize, vector<char>(mapSize, ' '));
@@ -671,6 +720,7 @@ void Scheduler::initial_scheduling(const vector<vector<vector<int>>>& known_cost
     const vector<shared_ptr<TASK>>& active_tasks,
     const vector<shared_ptr<ROBOT>>& robots)
 {
+    auto _t0 = chrono::high_resolution_clock::now();
     const int POPULATION_SIZE = 50;
     const int GENERATIONS = 400;
     const int MAX_NUM_TASKS = 20;
@@ -708,6 +758,7 @@ void Scheduler::initial_scheduling(const vector<vector<vector<int>>>& known_cost
 
     cout << "Best Solution Cost: " << best_solution.cost << endl;
 #endif
+    g_tm.init_sched_ms += chrono::duration<double, milli>(chrono::high_resolution_clock::now() - _t0).count();
 }
 
 void Scheduler::update_scheduling(const vector<vector<vector<int>>>& known_cost_map,
@@ -715,6 +766,7 @@ void Scheduler::update_scheduling(const vector<vector<vector<int>>>& known_cost_
     const vector<shared_ptr<TASK>>& active_tasks,
     const vector<shared_ptr<ROBOT>>& robots)
 {
+    auto _t0 = chrono::high_resolution_clock::now();
     int GENERATIONS = 10;
     vector<int> completed_tasks, new_active_tasks;
 
@@ -778,6 +830,8 @@ void Scheduler::update_scheduling(const vector<vector<vector<int>>>& known_cost_
             cout << endl;
             }
 #endif
+    g_tm.upd_sched_ms += chrono::duration<double, milli>(chrono::high_resolution_clock::now() - _t0).count();
+    g_tm.upd_sched_calls++;
 }
 
 void Scheduler::InitializePopulation(const vector<shared_ptr<TASK>> &active_tasks, vector<Chromosome>& population, int population_size)
@@ -845,6 +899,7 @@ void Scheduler::Evaluate(const vector<vector<vector<int>>>& known_cost_map, cons
 
 void Scheduler::Crossover(vector<Chromosome>& population, vector<Chromosome>& offspring, double crossover_rate)
 {
+    auto _t0 = chrono::high_resolution_clock::now();
     int population_size = population.size();
     int num_tasks = population[0].task_seq.size();
 
@@ -895,6 +950,8 @@ void Scheduler::Crossover(vector<Chromosome>& population, vector<Chromosome>& of
             offspring[i + 1].task_seq[j] = val2;
         }
     }
+    g_tm.crossover_ms += chrono::duration<double, milli>(chrono::high_resolution_clock::now() - _t0).count();
+    g_tm.crossover_calls++;
 }
 
 void Scheduler::Mutate_Task(vector<Chromosome>& population, double mutation_rate)

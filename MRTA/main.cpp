@@ -15,7 +15,8 @@ int main()
     set<Coord> observed_coords;
     set<Coord> updated_coords;
 
-    time_t t = time(NULL);
+    // time_t t = time(NULL);
+    time_t t = 1780543174;
     cout << "Random Seed:" << t << endl;
 
     srand(static_cast<unsigned int>(t));
@@ -116,6 +117,9 @@ int main()
             }
         }
     }
+
+    extern void printTimingReport();
+    printTimingReport();
 
     cout << endl;
     map.print_robot_summary();
