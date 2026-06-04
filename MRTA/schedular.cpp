@@ -43,7 +43,7 @@ void printTimingReport() {
 #define EID_UNKNOWN_WEIGHT    1.0   // unknown 셀 기여 가중치
 #define EID_STALENESS_WEIGHT  0.5   // 오래된 known 셀 기여 가중치
 #define EID_DISTANCE_WEIGHT   0.3   // 로봇 거리 기여 가중치
-#define DRONE_ENERGY_BUDGET   0.2   // 궤적 계획 에너지 비율 (initialDroneEnergy 기준)
+#define DRONE_ENERGY_BUDGET   0.15
 #define BEAM_WIDTH            5     // Beam Search 너비
 
 #define TASK_SCHEDULING_START_TIME_RATIO 0.2 // Time limit의 몇 %부터 task scheduling을 시작할지 결정하는 비율

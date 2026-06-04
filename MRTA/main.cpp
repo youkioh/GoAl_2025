@@ -15,8 +15,8 @@ int main()
     set<Coord> observed_coords;
     set<Coord> updated_coords;
 
-    // time_t t = time(NULL);
-    time_t t = 1780543174;
+    time_t t = time(NULL);
+    // time_t t = 1780543174;
     cout << "Random Seed:" << t << endl;
 
     srand(static_cast<unsigned int>(t));
