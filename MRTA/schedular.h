@@ -97,6 +97,9 @@ private:
     // EID 맵 (per-cell 정보 가치)
     vector<vector<double>> eid_map;
 
+    // 동적 budget 계산용 (buildEIDMap에서 갱신)
+    double unknown_ratio = 1.0;
+
     // 초기화
     void initialize(const vector<vector<vector<int>>>& known_cost_map,
         const vector<vector<OBJECT>>& known_object_map,

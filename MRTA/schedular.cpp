@@ -43,7 +43,8 @@ void printTimingReport() {
 #define EID_UNKNOWN_WEIGHT    1.0   // unknown 셀 기여 가중치
 #define EID_STALENESS_WEIGHT  0.5   // 오래된 known 셀 기여 가중치
 #define EID_DISTANCE_WEIGHT   0.3   // 로봇 거리 기여 가중치
-#define DRONE_ENERGY_BUDGET   0.15
+#define DRONE_BUDGET_MIN  0.10   // unknown 비율 0일 때 budget 비율
+#define DRONE_BUDGET_MAX  0.20   // unknown 비율 1일 때 budget 비율
 #define BEAM_WIDTH            5     // Beam Search 너비
 
 #define TASK_SCHEDULING_START_TIME_RATIO 0.2 // Time limit의 몇 %부터 task scheduling을 시작할지 결정하는 비율
@@ -343,6 +344,18 @@ void Scheduler::buildEIDMap(const vector<vector<vector<int>>>& known_cost_map,
             }
         }
     }
+    // unknown_ratio 갱신 (동적 budget 계산용)
+    int unknown_cells = 0, non_wall_cells = 0;
+    for (int x = 0; x < mapSize; x++)
+        for (int y = 0; y < mapSize; y++)
+            if (known_object_map[x][y] != OBJECT::WALL) {
+                non_wall_cells++;
+                if (known_object_map[x][y] == OBJECT::UNKNOWN) unknown_cells++;
+            }
+    unknown_ratio = non_wall_cells > 0
+        ? static_cast<double>(unknown_cells) / non_wall_cells
+        : 0.0;
+
     g_tm.buildEID_ms += chrono::duration<double, milli>(chrono::high_resolution_clock::now() - _t0).count();
     g_tm.buildEID_calls++;
 }
@@ -490,9 +503,12 @@ void Scheduler::planAllDroneTrajectories(
         auto& pathInfo = dronePaths[robot->id];
         if (!pathInfo.initialized) continue;
 
-        // 에너지 예산: initialDroneEnergy * 20% 고정 목표, 실제 에너지로 캡핑
+        // 동적 budget: unknown 비율에 따라 MIN~MAX 선형 보간
+        // unknown 많을수록(초반) 크게, 적을수록(후반) 작게
+        double budget_ratio = DRONE_BUDGET_MIN +
+            (DRONE_BUDGET_MAX - DRONE_BUDGET_MIN) * unknown_ratio;
         int budget = min(
-            static_cast<int>(initialDroneEnergy * DRONE_ENERGY_BUDGET),
+            static_cast<int>(initialDroneEnergy * budget_ratio),
             robot->get_energy()
         );
 
@@ -652,7 +668,7 @@ void Scheduler::visualizeDronePaths(const vector<vector<OBJECT>>& known_object_m
 #ifdef DRONE_PATH_VISUALIZATION
     cout << "현재 시뮬레이션 시간: " << current_time << endl;
     cout << "발견된 작업 개수: " << found_tasks_count << endl;
-    cout << "드론 에너지 예산: " << initialDroneEnergy * DRONE_ENERGY_BUDGET << endl;
+    cout << "드론 에너지 예산(비율): " << (DRONE_BUDGET_MIN + (DRONE_BUDGET_MAX - DRONE_BUDGET_MIN) * unknown_ratio) << endl;
     cout << "현재 드론의 에너지: ";
     for (const auto& robot : robots) {
         if (robot->type == ROBOT::TYPE::DRONE) {
