@@ -75,7 +75,6 @@ void Scheduler::on_info_updated(const set<Coord>& observed_coords,
     }
 
     if (!updated_coords.empty()) {
-        // 새 task 발견 시 robot re-scheduling
         if (scheduled) {
             for (auto uc : updated_coords)
             {
@@ -1054,6 +1053,7 @@ int Scheduler::calculate_distance(const vector<vector<vector<int>>>& grid, pair<
 }
 
 // MRTA/schedular.cpp 내부
+// MRTA/schedular.cpp 내부
 
 ROBOT::ACTION Scheduler::getLocalExplorationAction(
     const ROBOT& robot, 
@@ -1064,8 +1064,12 @@ ROBOT::ACTION Scheduler::getLocalExplorationAction(
     int mapSize = known_object_map.size();
     int robotTypeIdx = static_cast<int>(robot.type);
     
+    // 로봇 고유의 시야 범위와 형태 가져오기
+    int viewRange = ROBOT::view_range_list[robotTypeIdx];
+    ROBOT::VIEWTYPE viewType = ROBOT::view_type_list[robotTypeIdx];
+    
     ROBOT::ACTION best_action = ROBOT::ACTION::HOLD;
-    int oldest_time = current_time + 1; 
+    double best_score = -1.0; 
 
     // 핑퐁 방지를 위해 이전 위치 가져오기
     Coord prev_pos = {-1, -1};
@@ -1078,32 +1082,55 @@ ROBOT::ACTION Scheduler::getLocalExplorationAction(
         int ny = cur.y + dy[i];
         Coord nextCoord(nx, ny);
 
-        // 1. 맵 밖이거나 방금 온 길이면 제외
+        // 1. 당장 물리적으로 이동 가능한지 검사
         if (nx < 0 || nx >= mapSize || ny < 0 || ny >= mapSize) continue;
         if (nextCoord == prev_pos) continue;
-
-        // 2. 벽이거나 이동 불가 비용이면 제외
         if (known_object_map[nx][ny] == OBJECT::WALL) continue;
         if (known_object_map[nx][ny] != OBJECT::UNKNOWN && 
             (known_cost_map[nx][ny][robotTypeIdx] < 0 || known_cost_map[nx][ny][robotTypeIdx] == INFINITE)) {
             continue;
         }
 
-        // 3. 관측 시간 확인 (Unknown이거나 제일 오래된 곳 선호)
-        int observed_time = last_observed_time_map[nx][ny];
-        if (observed_time == -1) {
-            // 미지의 영역(Unknown) 발견 시 최우선 이동
-            best_action = getNextAction(cur, nextCoord);
-            break; 
-        } else if (observed_time < oldest_time) {
-            oldest_time = observed_time;
+        // 2. nx, ny 위치로 이동했을 때 얻을 수 있는 시야의 총 가치(Information Gain) 평가
+        double current_direction_score = 0.0;
+        
+        // 십자형(CROSS) 시야인 경우 (예: Wheel)
+        if (viewType == ROBOT::VIEWTYPE::CROSS) {
+            for (int vx = max(nx - viewRange, 0); vx <= min(nx + viewRange, mapSize - 1); ++vx) {
+                int observed_time = last_observed_time_map[vx][ny];
+                if (observed_time == -1) current_direction_score += 10000.0; // 미지(Unknown) 영역
+                else current_direction_score += (current_time - observed_time); // 오래될수록 높은 점수
+            }
+            for (int vy = max(ny - viewRange, 0); vy <= min(ny + viewRange, mapSize - 1); ++vy) {
+                if (vy == ny) continue; // 교차점 중복 합산 방지
+                int observed_time = last_observed_time_map[nx][vy];
+                if (observed_time == -1) current_direction_score += 10000.0;
+                else current_direction_score += (current_time - observed_time);
+            }
+        } 
+        // 정사각형(SQUARE) 시야인 경우 (예: Caterpillar)
+        else if (viewType == ROBOT::VIEWTYPE::SQUARE) {
+            for (int vx = max(nx - viewRange, 0); vx <= min(nx + viewRange, mapSize - 1); ++vx) {
+                for (int vy = max(ny - viewRange, 0); vy <= min(ny + viewRange, mapSize - 1); ++vy) {
+                    int observed_time = last_observed_time_map[vx][vy];
+                    if (observed_time == -1) current_direction_score += 10000.0;
+                    else current_direction_score += (current_time - observed_time);
+                }
+            }
+        }
+
+        // 가장 점수가 높은(즉, 가장 많은 Frontier와 미지 영역을 밝힐 수 있는) 방향 선택
+        if (current_direction_score > best_score) {
+            best_score = current_direction_score;
             best_action = getNextAction(cur, nextCoord);
         }
     }
 
-    // 다음 이동을 위해 현재 위치 저장
+    // 다음 이동을 위해 현재 위치 저장 (단, 갈 곳이 없어 HOLD인 경우 핑퐁 방지 초기화)
     if (best_action != ROBOT::ACTION::HOLD) {
         previous_positions[robot.id] = cur;
+    } else {
+        previous_positions[robot.id] = {-1, -1}; // 갇힘 방지 자가 치유
     }
 
     return best_action;
