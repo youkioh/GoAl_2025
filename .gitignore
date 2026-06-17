@@ -1,5 +1,5 @@
-MRTA/build/MRTA/build/log_*.txt
-MRTA/build/
+HC_MRTA/build/MRTA/build/log_*.txt
+HC_MRTA/build/
 
 Claude/
 *.csv

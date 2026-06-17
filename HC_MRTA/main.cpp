@@ -1,8 +1,6 @@
 #include "simulator.h"
 #include "schedular.h"
 
-#include <fstream>
-
 int main()
 {
     constexpr int MAP_SIZE = 20;
@@ -15,20 +13,15 @@ int main()
     set<Coord> observed_coords;
     set<Coord> updated_coords;
 
-    time_t t = time(NULL);
-    // time_t t = 1780543174;
-    cout << "Random Seed:" << t << endl;
-
-    srand(static_cast<unsigned int>(t));
-    //srand(1749356593);
+    srand(static_cast<unsigned int>(time(NULL)));
 
     TIMER timer;
     MAP map(MAP_SIZE, NUM_ROBOT, NUM_INITIAL_TASKS, NUM_MAX_TASKS, WALL_DENSITY, ROBOT_ENERGY);
     int time = -1;
-    auto& robots = map.get_robots();
-    auto& known_cost_map = map.get_known_cost_map();
-    auto& known_object_map = map.get_known_object_map();
-    auto& active_tasks = map.get_active_tasks();
+    auto &robots = map.get_robots();
+    auto &known_cost_map = map.get_known_cost_map();
+    auto &known_object_map = map.get_known_object_map();
+    auto &active_tasks = map.get_active_tasks();
     Scheduler scheduler;
     TASKDISPATCHER taskdispatcher(map, TIME_MAX);
 
@@ -38,8 +31,8 @@ int main()
 #endif // VERBOSE
 
     while (++time < TIME_MAX &&
-        robots.size() != map.get_exhausted_robot_num() &&
-        map.num_total_task != map.get_completed_task_num())
+           robots.size() != map.get_exhausted_robot_num() &&
+           map.num_total_task != map.get_completed_task_num())
     {
         taskdispatcher.try_dispatch(time);
         observed_coords = map.observed_coord_by_robot();
@@ -50,24 +43,18 @@ int main()
         map.print_robot_summary();
         map.print_task_summary();
 #endif // VERBOSE
-        // if (time % 250 == 1){
-        //     cout << "Time : " << time << endl;
-        //     map.print_object_map();
-        //     map.print_robot_summary();
-        //     map.print_task_summary();
-        // }
 
         timer.start();
         scheduler.on_info_updated(observed_coords,
-            updated_coords,
-            known_cost_map,
-            known_object_map,
-            active_tasks,
-            robots);
+                                  updated_coords,
+                                  known_cost_map,
+                                  known_object_map,
+                                  active_tasks,
+                                  robots);
         timer.stop();
         for (auto robot : robots)
         {
-            auto& status = robot->get_status();
+            auto &status = robot->get_status();
             if (status == ROBOT::STATUS::IDLE)
             {
                 auto coord = robot->get_coord();
@@ -78,13 +65,13 @@ int main()
                     task = map.task_at(coord);
                     timer.start();
                     do_task = scheduler.on_task_reached(observed_coords,
-                        updated_coords,
-                        known_cost_map,
-                        known_object_map,
-                        active_tasks,
-                        robots,
-                        *robot,
-                        *(task.lock()));
+                                                        updated_coords,
+                                                        known_cost_map,
+                                                        known_object_map,
+                                                        active_tasks,
+                                                        robots,
+                                                        *robot,
+                                                        *(task.lock()));
                     timer.stop();
                 }
 
@@ -96,12 +83,12 @@ int main()
                 {
                     timer.start();
                     ROBOT::ACTION action = scheduler.idle_action(observed_coords,
-                        updated_coords,
-                        known_cost_map,
-                        known_object_map,
-                        active_tasks,
-                        robots,
-                        *robot);
+                                                                 updated_coords,
+                                                                 known_cost_map,
+                                                                 known_object_map,
+                                                                 active_tasks,
+                                                                 robots,
+                                                                 *robot);
                     timer.stop();
                     robot->start_moving(action);
                 }
@@ -118,14 +105,11 @@ int main()
         }
     }
 
-    extern void printTimingReport();
-    printTimingReport();
-
     cout << endl;
     map.print_robot_summary();
     map.print_task_summary();
     size_t unit;
-    string units[] = { "ns", "us", "ms", "s" };
+    string units[] = {"ns", "us", "ms", "s"};
     double count = static_cast<double>(timer.time_elapsed.count());
     for (unit = 0; unit < 4 && count >= 1e3; ++unit)
         count /= 1e3;

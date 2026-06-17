@@ -1,6 +1,8 @@
 #ifndef SCHEDULER_H_
 #define SCHEDULER_H_
 
+// #define DRONE_PATH_VISUALIZATION
+
 #include <algorithm>
 #include <random>
 #include <unordered_set>

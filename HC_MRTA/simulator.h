@@ -2,7 +2,6 @@
 #define SIMULATER_H_
 
 // #define VERBOSE
-#define DRONE_PATH_VISUALIZATION
 
 #include <iostream>
 #include <vector>
@@ -12,8 +11,7 @@
 #include <functional>
 #include <cstdio>
 #include <chrono>
-// #include <conio.h>
-#include <memory>
+#include <conio.h>
 #include <sstream>
 #include <fstream>
 
