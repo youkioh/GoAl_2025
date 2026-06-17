@@ -39,9 +39,9 @@ except ImportError:
     )
 
 # ─── 경로 설정 ────────────────────────────────────────────────────────────────
-SRC_DIR     = "/home/sungsu/GoAl_2025/MRTA"
-RESULTS_CSV = "/home/sungsu/GoAl_2025/tune/tune_bayes_results.csv"
-DB_PATH     = "/home/sungsu/GoAl_2025/tune/tune_bayes.db"
+SRC_DIR     = "/home/new_cloud_cxl/sungsu/GoAl_2025/MRTA"
+RESULTS_CSV = "/home/new_cloud_cxl/sungsu/GoAl_2025/tune/tune_bayes_results.csv"
+DB_PATH     = "/home/new_cloud_cxl/sungsu/GoAl_2025/tune/tune_bayes.db"
 STUDY_NAME  = "mrta_eid_bayes"
 
 SRC_FILES = [
@@ -50,17 +50,17 @@ SRC_FILES = [
 ]
 
 # ─── 실험 설정 ────────────────────────────────────────────────────────────────
-N_SEEDS = 5
+N_SEEDS = 10
 W_FOUND = 1.0
-W_DONE  = 1.0
+W_DONE  = 2.0
 
 # ─── 연속 탐색 범위 ───────────────────────────────────────────────────────────
 # Grid Search의 이산 격자보다 넓게 설정해 BO가 격자 밖도 탐색할 수 있게 한다.
 # DRONE_BUDGET_MAX = DRONE_BUDGET_MIN + DRONE_BUDGET_GAP (항상 MAX >= MIN 보장)
 PARAM_RANGES = {
-    "EID_UNKNOWN_WEIGHT":   (0.1, 3.0),
-    "EID_STALENESS_WEIGHT": (0.1, 1.0),
-    "EID_DISTANCE_WEIGHT":  (0.05, 0.8),
+    "EID_UNKNOWN_WEIGHT":   (0.3, 3.0),
+    "EID_STALENESS_WEIGHT": (0.3, 1.0),
+    "EID_DISTANCE_WEIGHT":  (0.05, 0.5),
     "DRONE_BUDGET_MIN":     (0.05, 0.30),
     "DRONE_BUDGET_GAP":     (0.0,  0.25),
 }

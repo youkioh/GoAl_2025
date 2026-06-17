@@ -40,12 +40,12 @@ void printTimingReport() {
 }
 // ---- 타이밍 끝 ----
 
-#define EID_UNKNOWN_WEIGHT    1.0   // unknown 셀 기여 가중치
-#define EID_STALENESS_WEIGHT  0.5   // 오래된 known 셀 기여 가중치
-#define EID_DISTANCE_WEIGHT   0.3   // 로봇 거리 기여 가중치
-#define DRONE_BUDGET_MIN  0.10   // unknown 비율 0일 때 budget 비율
-#define DRONE_BUDGET_MAX  0.20   // unknown 비율 1일 때 budget 비율
-#define BEAM_WIDTH            5     // Beam Search 너비
+#define EID_UNKNOWN_WEIGHT    2.6286  // unknown 셀 기여 가중치
+#define EID_STALENESS_WEIGHT  0.5881  // 오래된 known 셀 기여 가중치
+#define EID_DISTANCE_WEIGHT   0.1338  // 로봇 거리 기여 가중치
+#define DRONE_BUDGET_MIN  0.1508  // unknown 비율 0일 때 budget 비율
+#define DRONE_BUDGET_MAX  0.3152  // unknown 비율 1일 때 budget 비율
+#define BEAM_WIDTH            8     // Beam Search 너비
 
 #define TASK_SCHEDULING_START_TIME_RATIO 0.2 // Time limit의 몇 %부터 task scheduling을 시작할지 결정하는 비율
 
@@ -192,32 +192,10 @@ ROBOT::ACTION Scheduler::idle_action(const set<Coord>& observed_coords,
     else {
         
         if (robot.get_energy() < initialDroneEnergy / 2  && current_time < max_time * 5 / 10) {
+            // 대기 상태가 끝나고 다시 이동을 시작할 때 재계획하도록 남은 궤적을 비워둡니다
+            dronePaths[robot.id].trajectory = { robot.get_coord() };
             return ROBOT::ACTION::HOLD; // 드론은 HOLD 액션
         }
-
-        // if (robot.get_energy() < initialDroneEnergy / 2 && active_tasks.size() >= 4) {
-        //     int totalEnergy = 0;
-        //     int count = 0;
-        //     for (auto& robot : robots) {
-        //         if (robot->type != ROBOT::TYPE::DRONE) {
-        //             count++;
-        //             totalEnergy += robot->get_energy();
-        //         }
-        //     }
-        //     int avgEnergy = totalEnergy / count;
-            
-        //     if (robot.get_energy() < avgEnergy) {
-        //         return ROBOT::ACTION::HOLD;
-        // }
-
-// #ifdef DRONE_PATH_VISUALIZATION
-//             cout << "드론 HOLD. 활성화된 작업 개수: " << active_tasks.size()
-//                 << ", 에너지: " << robot.get_energy() << endl;
-// #endif //DRONE_PATH_VISUALIZATION
-//             return ROBOT::ACTION::HOLD; // 에너지가 절반 이하이고, 활성화된 작업이 4개 이상인 경우 대기
-        // }
-
-            // 이하 드론만 실행
     auto& pathInfo = dronePaths[robot.id];
 
     if (!pathInfo.initialized) return ROBOT::ACTION::HOLD;

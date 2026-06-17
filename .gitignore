@@ -2,3 +2,5 @@ MRTA/build/MRTA/build/log_*.txt
 MRTA/build/
 
 Claude/
+*.csv
+*.log

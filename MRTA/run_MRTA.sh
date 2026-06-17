@@ -25,11 +25,11 @@ for log_file in build/log_*.txt; do
     awk '
     /Active task:/ {
         match($0, /Active task:[[:space:]]*([0-9]+)/, a)
-        if (a[1]) active = a[1]
+        if (a[1] != "") active = a[1]
     }
     /Completed task/ {
         match($0, /Completed task[[:space:]]*:[[:space:]]*([0-9]+)/, b)
-        if (b[1]) completed = b[1]
+        if (b[1] != "") completed = b[1]
     }
     END {
         if (active != "" && completed != "") 
